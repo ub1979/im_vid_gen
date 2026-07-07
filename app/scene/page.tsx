@@ -23,11 +23,11 @@ const STORAGE_KEY = "image_creator_settings";
 
 const DEFAULTS: Record<string, string> = {
   defaultImageProvider: "comfyui",
-  defaultImageModel: "qwen_image_fp8_e4m3fn.safetensors",
+  defaultImageModel: "flux2_dev_turbo",
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
   ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://192.168.0.24:8188",
+  comfyuiUrl: "http://localhost:8188",
 };
 
 function loadSettings() {
@@ -350,6 +350,11 @@ function SceneContent() {
         </div>
       )}
 
+      <div className="note" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 12 }}>
+        <strong>Image:</strong> {imageProviderId} / {imageModel} &nbsp;|&nbsp;
+        <strong>Text LLM:</strong> {textProviderId} / {textModel}
+      </div>
+
       {error && (
         <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 16 }}>
           {error}
@@ -531,7 +536,7 @@ function SceneContent() {
             <div style={{ width: `${scenes.length > 0 ? (doneCount / scenes.length) * 100 : 0}%` }} />
           </div>
           <p className="muted" style={{ textAlign: "center" }}>
-            {doneCount} / {scenes.length} images generated
+            {doneCount} / {scenes.length} images generated &middot; {imageModel}
           </p>
 
           <div className="scene-grid">

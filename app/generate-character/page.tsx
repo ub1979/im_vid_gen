@@ -6,11 +6,11 @@ const STORAGE_KEY = "image_creator_settings";
 
 const DEFAULTS: Record<string, string> = {
   defaultImageProvider: "comfyui",
-  defaultImageModel: "qwen_image_fp8_e4m3fn.safetensors",
+  defaultImageModel: "flux2_dev_turbo",
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
   ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://192.168.0.24:8188",
+  comfyuiUrl: "http://localhost:8188",
 };
 
 function loadSettings() {
@@ -41,6 +41,7 @@ export default function GenerateCharacterPage() {
     imageBase64: string;
     mime: string;
     enhancedPrompt: string;
+    generation?: { imageProvider: string; imageModel: string; textProvider: string; textModel: string };
   } | null>(null);
   const [saved, setSaved] = useState(false);
   const [settings, setSettings] = useState<Record<string, string> | null>(null);
@@ -108,7 +109,7 @@ export default function GenerateCharacterPage() {
       }
 
       const data = await res.json();
-      setResult({ imageBase64: data.imageBase64, mime: data.mime, enhancedPrompt: data.enhancedPrompt });
+      setResult({ imageBase64: data.imageBase64, mime: data.mime, enhancedPrompt: data.enhancedPrompt, generation: data.generation });
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
@@ -283,6 +284,10 @@ export default function GenerateCharacterPage() {
                 placeholder="Describe the character's appearance, outfit, personality..."
               />
             </div>
+            <div className="note" style={{ fontSize: 11, marginBottom: 8, padding: "6px 10px" }}>
+              <strong>Image:</strong> {imageProviderId} / {imageModel} &nbsp;|&nbsp;
+              <strong>Text LLM:</strong> {textProviderId} / {textModel}
+            </div>
             <button
               className="btn btn-primary"
               style={{ width: "100%" }}
@@ -309,6 +314,13 @@ export default function GenerateCharacterPage() {
                   style={{ width: "100%", borderRadius: 10, marginBottom: 12 }}
                 />
                 {saved && <p style={{ color: "var(--ok)", fontSize: 13 }}>Saved to library</p>}
+                {result.generation && (
+                  <div className="note" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 8 }}>
+                    <strong>Generated with:</strong><br />
+                    Image: {result.generation.imageProvider} / {result.generation.imageModel}<br />
+                    Text: {result.generation.textProvider} / {result.generation.textModel}
+                  </div>
+                )}
                 <details style={{ marginTop: 8 }}>
                   <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Enhanced prompt</summary>
                   <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-dim)" }}>{result.enhancedPrompt}</p>

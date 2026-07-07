@@ -16,6 +16,60 @@ const ASPECT_RATIOS: Record<string, [number, number]> = {
   "2:3": [832, 1216],
 };
 
+interface ModelConfig {
+  unet: string;
+  clip: string;
+  clipType: string;
+  vae: string;
+  workflow: "qwen" | "flux2" | "flux2turbo" | "zimage";
+  lora?: string;
+  loraStrength?: number;
+  defaultSteps: number;
+}
+
+const MODEL_CONFIGS: Record<string, ModelConfig> = {
+  "qwen_image_fp8_e4m3fn.safetensors": {
+    unet: "qwen_image_fp8_e4m3fn.safetensors",
+    clip: "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    clipType: "qwen_image",
+    vae: "qwen_image_vae.safetensors",
+    workflow: "qwen",
+    defaultSteps: 20,
+  },
+  "flux2_dev_fp8mixed.safetensors": {
+    unet: "flux2_dev_fp8mixed.safetensors",
+    clip: "mistral_3_small_flux2_fp4_mixed.safetensors",
+    clipType: "flux2",
+    vae: "full_encoder_small_decoder.safetensors",
+    workflow: "flux2",
+    defaultSteps: 20,
+  },
+  "flux2_dev_turbo": {
+    unet: "flux2_dev_fp8mixed.safetensors",
+    clip: "mistral_3_small_flux2_fp4_mixed.safetensors",
+    clipType: "flux2",
+    vae: "full_encoder_small_decoder.safetensors",
+    workflow: "flux2turbo",
+    lora: "Flux_2-Turbo-LoRA_comfyui.safetensors",
+    loraStrength: 1.0,
+    defaultSteps: 8,
+  },
+  "z_image_turbo_bf16.safetensors": {
+    unet: "z_image_turbo_bf16.safetensors",
+    clip: "qwen_3_4b.safetensors",
+    clipType: "z_image",
+    vae: "ae.safetensors",
+    workflow: "zimage",
+    defaultSteps: 4,
+  },
+};
+
+function getModelConfig(model: string): ModelConfig {
+  return MODEL_CONFIGS[model] ?? MODEL_CONFIGS["flux2_dev_fp8mixed.safetensors"];
+}
+
+// ---- Workflow builders ----
+
 function buildQwenTxt2ImgWorkflow(
   prompt: string,
   width: number,
@@ -77,6 +131,268 @@ function buildQwenTxt2ImgWorkflow(
     },
   };
 }
+
+function buildFlux2Txt2ImgWorkflow(
+  prompt: string,
+  config: ModelConfig,
+  width: number,
+  height: number,
+  seed: number,
+  steps: number = 20,
+): Record<string, unknown> {
+  return {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: config.unet, weight_dtype: "default" },
+    },
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: config.clip, type: config.clipType, device: "default" },
+    },
+    "3": {
+      class_type: "VAELoader",
+      inputs: { vae_name: config.vae },
+    },
+    "4": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: prompt, clip: ["2", 0] },
+    },
+    "5": {
+      class_type: "FluxGuidance",
+      inputs: { conditioning: ["4", 0], guidance: 4.0 },
+    },
+    "6": {
+      class_type: "EmptyFlux2LatentImage",
+      inputs: { width, height, batch_size: 1 },
+    },
+    "7": {
+      class_type: "Flux2Scheduler",
+      inputs: { steps, width, height },
+    },
+    "8": {
+      class_type: "BasicGuider",
+      inputs: { model: ["1", 0], conditioning: ["5", 0] },
+    },
+    "9": {
+      class_type: "RandomNoise",
+      inputs: { noise_seed: seed },
+    },
+    "10": {
+      class_type: "KSamplerSelect",
+      inputs: { sampler_name: "euler" },
+    },
+    "11": {
+      class_type: "SamplerCustomAdvanced",
+      inputs: {
+        noise: ["9", 0],
+        guider: ["8", 0],
+        sampler: ["10", 0],
+        sigmas: ["7", 0],
+        latent_image: ["6", 0],
+      },
+    },
+    "12": {
+      class_type: "VAEDecode",
+      inputs: { samples: ["11", 0], vae: ["3", 0] },
+    },
+    "13": {
+      class_type: "SaveImage",
+      inputs: { filename_prefix: "comfyui_api", images: ["12", 0] },
+    },
+  };
+}
+
+function buildFlux2RefWorkflow(
+  prompt: string,
+  config: ModelConfig,
+  refImageFilenames: string[],
+  width: number,
+  height: number,
+  seed: number,
+  steps: number = 20,
+): Record<string, unknown> {
+  const nodes: Record<string, unknown> = {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: config.unet, weight_dtype: "default" },
+    },
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: config.clip, type: config.clipType, device: "default" },
+    },
+    "3": {
+      class_type: "VAELoader",
+      inputs: { vae_name: config.vae },
+    },
+    "4": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: prompt, clip: ["2", 0] },
+    },
+    "5": {
+      class_type: "FluxGuidance",
+      inputs: { conditioning: ["4", 0], guidance: 4.0 },
+    },
+  };
+
+  // Chain ReferenceLatent nodes for each reference image
+  let lastConditioningNode = "5";
+  let nodeId = 20;
+
+  for (const filename of refImageFilenames) {
+    const loadId = String(nodeId++);
+    const scaleId = String(nodeId++);
+    const encodeId = String(nodeId++);
+    const refLatentId = String(nodeId++);
+
+    nodes[loadId] = {
+      class_type: "LoadImage",
+      inputs: { image: filename, upload: "image" },
+    };
+    nodes[scaleId] = {
+      class_type: "ImageScaleToTotalPixels",
+      inputs: { image: [loadId, 0], upscale_method: "lanczos", megapixels: 1.0, resolution_steps: 1 },
+    };
+    nodes[encodeId] = {
+      class_type: "VAEEncode",
+      inputs: { pixels: [scaleId, 0], vae: ["3", 0] },
+    };
+    nodes[refLatentId] = {
+      class_type: "ReferenceLatent",
+      inputs: { conditioning: [lastConditioningNode, 0], latent: [encodeId, 0] },
+    };
+    lastConditioningNode = refLatentId;
+  }
+
+  // Sampler pipeline
+  Object.assign(nodes, {
+    "10": {
+      class_type: "EmptyFlux2LatentImage",
+      inputs: { width, height, batch_size: 1 },
+    },
+    "11": {
+      class_type: "Flux2Scheduler",
+      inputs: { steps, width, height },
+    },
+    "12": {
+      class_type: "BasicGuider",
+      inputs: { model: ["1", 0], conditioning: [lastConditioningNode, 0] },
+    },
+    "13": {
+      class_type: "RandomNoise",
+      inputs: { noise_seed: seed },
+    },
+    "14": {
+      class_type: "KSamplerSelect",
+      inputs: { sampler_name: "euler" },
+    },
+    "15": {
+      class_type: "SamplerCustomAdvanced",
+      inputs: {
+        noise: ["13", 0],
+        guider: ["12", 0],
+        sampler: ["14", 0],
+        sigmas: ["11", 0],
+        latent_image: ["10", 0],
+      },
+    },
+    "16": {
+      class_type: "VAEDecode",
+      inputs: { samples: ["15", 0], vae: ["3", 0] },
+    },
+    "17": {
+      class_type: "SaveImage",
+      inputs: { filename_prefix: "comfyui_api", images: ["16", 0] },
+    },
+  });
+
+  return nodes;
+}
+
+function buildZImageTxt2ImgWorkflow(
+  prompt: string,
+  config: ModelConfig,
+  width: number,
+  height: number,
+  seed: number,
+  steps: number = 4,
+): Record<string, unknown> {
+  return {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: config.unet, weight_dtype: "default" },
+    },
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: config.clip, type: config.clipType },
+    },
+    "3": {
+      class_type: "VAELoader",
+      inputs: { vae_name: config.vae },
+    },
+    "4": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: prompt, clip: ["2", 0] },
+    },
+    "5": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: "", clip: ["2", 0] },
+    },
+    "6": {
+      class_type: "EmptySD3LatentImage",
+      inputs: { width, height, batch_size: 1 },
+    },
+    "7": {
+      class_type: "KSampler",
+      inputs: {
+        seed,
+        steps,
+        cfg: 1.0,
+        sampler_name: "euler",
+        scheduler: "simple",
+        denoise: 1.0,
+        model: ["1", 0],
+        positive: ["4", 0],
+        negative: ["5", 0],
+        latent_image: ["6", 0],
+      },
+    },
+    "8": {
+      class_type: "VAEDecode",
+      inputs: { samples: ["7", 0], vae: ["3", 0] },
+    },
+    "9": {
+      class_type: "SaveImage",
+      inputs: { filename_prefix: "comfyui_api", images: ["8", 0] },
+    },
+  };
+}
+
+// ---- Upload reference images to ComfyUI ----
+
+async function uploadImage(
+  baseUrl: string,
+  imageBuffer: Buffer,
+  filename: string,
+): Promise<string> {
+  const formData = new FormData();
+  const blob = new Blob([new Uint8Array(imageBuffer)], { type: "image/png" });
+  formData.append("image", blob, filename);
+  formData.append("overwrite", "true");
+
+  const res = await fetch(`${baseUrl}/upload/image`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new Error(`ComfyUI upload failed (${res.status}): ${await res.text()}`);
+  }
+
+  const data = await res.json();
+  return data.name;
+}
+
+// ---- Queue / Wait / Download ----
 
 async function queuePrompt(
   baseUrl: string,
@@ -171,29 +487,84 @@ export async function fetchComfyUIModels(
     const data = await res.json();
     const unetInput = data?.UNETLoader?.input?.required?.unet_name;
     if (Array.isArray(unetInput) && Array.isArray(unetInput[0])) {
-      return unetInput[0] as string[];
+      const models = unetInput[0] as string[];
+      if (models.includes("flux2_dev_fp8mixed.safetensors")) {
+        models.push("flux2_dev_turbo");
+      }
+      return models;
     }
   } catch { /* skip */ }
   return [];
 }
 
+// ---- LoRA injection ----
+
+function applyLoraToWorkflow(workflow: Record<string, unknown>, config: ModelConfig): void {
+  if (!config.lora) return;
+  const loraNodeId = "99";
+  workflow[loraNodeId] = {
+    class_type: "LoraLoaderModelOnly",
+    inputs: {
+      model: ["1", 0],
+      lora_name: config.lora,
+      strength_model: config.loraStrength ?? 1.0,
+    },
+  };
+  // Rewire: find the node that consumes model ["1", 0] for guiding (BasicGuider)
+  for (const [id, node] of Object.entries(workflow)) {
+    if (id === loraNodeId) continue;
+    const n = node as { class_type?: string; inputs?: Record<string, unknown> };
+    if (n.class_type === "BasicGuider" && Array.isArray(n.inputs?.model) && n.inputs!.model[0] === "1") {
+      n.inputs!.model = [loraNodeId, 0];
+    }
+  }
+}
+
+// ---- Provider ----
+
 export const comfyuiImageProvider: ImageProvider = {
   id: "comfyui",
 
   capabilities: {
-    supports_reference_edit: false,
-    max_reference_images: 0,
+    supports_reference_edit: true,
+    max_reference_images: 10,
     supports_text_to_image: true,
   },
 
   async generate(req: ImageGenRequest): Promise<ImageGenResult> {
     const baseUrl = req.baseUrl || DEFAULT_BASE_URL;
+    const config = getModelConfig(req.model);
 
     const [width, height] =
       ASPECT_RATIOS[req.aspectRatio || "1:1"] || [1024, 1024];
 
     const seed = Math.floor(Math.random() * 2 ** 32);
-    const workflow = buildQwenTxt2ImgWorkflow(req.prompt, width, height, seed);
+    const hasRefs = req.referenceImages && req.referenceImages.length > 0;
+
+    let workflow: Record<string, unknown>;
+
+    const isFlux2 = config.workflow === "flux2" || config.workflow === "flux2turbo";
+
+    if (hasRefs && isFlux2) {
+      const uploadedNames: string[] = [];
+      for (let i = 0; i < req.referenceImages!.length; i++) {
+        const name = await uploadImage(
+          baseUrl,
+          req.referenceImages![i],
+          `ref_${Date.now()}_${i}.png`,
+        );
+        uploadedNames.push(name);
+      }
+      workflow = buildFlux2RefWorkflow(req.prompt, config, uploadedNames, width, height, seed, config.defaultSteps);
+      if (config.lora) applyLoraToWorkflow(workflow, config);
+    } else if (isFlux2) {
+      workflow = buildFlux2Txt2ImgWorkflow(req.prompt, config, width, height, seed, config.defaultSteps);
+      if (config.lora) applyLoraToWorkflow(workflow, config);
+    } else if (config.workflow === "zimage") {
+      workflow = buildZImageTxt2ImgWorkflow(req.prompt, config, width, height, seed, config.defaultSteps);
+    } else {
+      workflow = buildQwenTxt2ImgWorkflow(req.prompt, width, height, seed);
+    }
 
     const promptId = await queuePrompt(baseUrl, workflow);
     const outputFilename = await waitForResult(baseUrl, promptId);
@@ -202,7 +573,7 @@ export const comfyuiImageProvider: ImageProvider = {
     return {
       image,
       mime: "image/png",
-      mode: "text_to_image",
+      mode: hasRefs && isFlux2 ? "reference_edit" : "text_to_image",
     };
   },
 };

@@ -47,7 +47,7 @@ export const IMAGE_PROVIDERS: ProviderDescriptor[] = [
   },
   {
     id: "comfyui",
-    label: "ComfyUI (Qwen-Image)",
+    label: "ComfyUI (local GPU)",
     capabilities: comfyuiImageProvider.capabilities,
   },
 ];

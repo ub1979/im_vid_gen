@@ -15,11 +15,20 @@ export interface SceneEntry extends Scene {
   imagePath?: string | null;
   error?: string;
   mode?: "reference_edit" | "text_to_image";
+  generation?: GenerationMeta;
 }
 
 export interface ProviderConfig {
   image: { id: string; model: string };
   text: { id: string; model: string };
+}
+
+export interface GenerationMeta {
+  imageProvider?: string;
+  imageModel?: string;
+  textProvider?: string;
+  textModel?: string;
+  generatedAt?: string;
 }
 
 export interface LibraryCharacter {
@@ -28,6 +37,7 @@ export interface LibraryCharacter {
   description: string;
   imagePath?: string;
   createdAt: string;
+  generation?: GenerationMeta;
 }
 
 export interface ProjectManifest {

@@ -35,9 +35,9 @@ const DEFAULTS: SettingsState = {
   qwenKey: "",
   ollamaUrl: "http://localhost:11434",
   openaiBaseUrl: "",
-  comfyuiUrl: "http://192.168.0.24:8188",
+  comfyuiUrl: "http://localhost:8188",
   defaultImageProvider: "comfyui",
-  defaultImageModel: "qwen_image_fp8_e4m3fn.safetensors",
+  defaultImageModel: "flux2_dev_turbo",
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
   defaultKeyframes: 12,
@@ -49,7 +49,7 @@ const IMAGE_PROVIDER_OPTIONS = [
   { id: "openai", label: "OpenAI" },
   { id: "qwen", label: "Qwen" },
   { id: "ollama", label: "Ollama (local)" },
-  { id: "comfyui", label: "ComfyUI (Qwen-Image)" },
+  { id: "comfyui", label: "ComfyUI (local GPU)" },
 ];
 
 const TEXT_PROVIDER_OPTIONS = [

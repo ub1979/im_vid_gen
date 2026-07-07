@@ -64,7 +64,7 @@ export async function POST(request: Request) {
       model: imageProvider.model,
     });
 
-    // Step 3: Save to library
+    // Step 3: Save to library with generation metadata
     const id = crypto.randomUUID();
     const imagePath = await saveLibraryCharacterImage(id, result.image);
     const character = await addLibraryCharacter({
@@ -72,6 +72,13 @@ export async function POST(request: Request) {
       label,
       description,
       imagePath,
+      generation: {
+        imageProvider: imageProvider.id,
+        imageModel: imageProvider.model,
+        textProvider: textProvider.id,
+        textModel: textProvider.model,
+        generatedAt: new Date().toISOString(),
+      },
     });
 
     return NextResponse.json({
@@ -79,6 +86,12 @@ export async function POST(request: Request) {
       enhancedPrompt,
       imageBase64: result.image.toString("base64"),
       mime: result.mime,
+      generation: {
+        imageProvider: imageProvider.id,
+        imageModel: imageProvider.model,
+        textProvider: textProvider.id,
+        textModel: textProvider.model,
+      },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

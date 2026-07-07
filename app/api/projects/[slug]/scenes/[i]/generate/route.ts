@@ -60,6 +60,13 @@ export async function POST(request: Request, { params }: Params) {
         imagePath,
         mode: result.mode,
         error: undefined,
+        generation: {
+          imageProvider: providerId,
+          imageModel: providerModel,
+          textProvider: manifest.provider.text.id,
+          textModel: manifest.provider.text.model,
+          generatedAt: new Date().toISOString(),
+        },
       };
       await updateProject(slug, { scenes: manifest.scenes });
 
