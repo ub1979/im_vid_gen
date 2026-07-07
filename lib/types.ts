@@ -6,6 +6,7 @@ export interface CharacterRef {
   id: string;
   label: string;
   description?: string;
+  visualDescription?: string;
   imagePath?: string;
 }
 

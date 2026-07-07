@@ -78,7 +78,7 @@ export async function generateKeyframe(
 function augmentPrompt(prompt: string, chars: CharacterRef[]): string {
   const descs = chars
     .map((c) => {
-      const desc = c.description || `a character named ${c.label}`;
+      const desc = c.visualDescription || c.description || `a character named ${c.label}`;
       return `${c.label}: ${desc}`;
     })
     .join(". ");
