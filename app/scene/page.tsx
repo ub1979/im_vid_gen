@@ -23,7 +23,7 @@ const STORAGE_KEY = "image_creator_settings";
 
 const DEFAULTS: Record<string, string> = {
   defaultImageProvider: "comfyui",
-  defaultImageModel: "flux2_dev_turbo",
+  defaultImageModel: "flux2_dev_fp8mixed.safetensors",
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
   ollamaUrl: "http://localhost:11434",

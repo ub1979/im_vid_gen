@@ -7,6 +7,7 @@ interface SettingsState {
   openaiKey: string;
   claudeKey: string;
   qwenKey: string;
+  piapiKey: string;
   ollamaUrl: string;
   openaiBaseUrl: string;
   comfyuiUrl: string;
@@ -14,6 +15,8 @@ interface SettingsState {
   defaultImageModel: string;
   defaultTextProvider: string;
   defaultTextModel: string;
+  defaultVideoProvider: string;
+  defaultVideoModel: string;
   defaultKeyframes: number;
   maxImagesPerRun: number;
 }
@@ -33,13 +36,16 @@ const DEFAULTS: SettingsState = {
   openaiKey: "",
   claudeKey: "",
   qwenKey: "",
+  piapiKey: "",
   ollamaUrl: "http://localhost:11434",
   openaiBaseUrl: "",
   comfyuiUrl: "http://localhost:8188",
   defaultImageProvider: "comfyui",
-  defaultImageModel: "flux2_dev_turbo",
+  defaultImageModel: "flux2_dev_fp8mixed.safetensors",
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
+  defaultVideoProvider: "comfyui",
+  defaultVideoModel: "ltx-2.3",
   defaultKeyframes: 12,
   maxImagesPerRun: 0,
 };
@@ -50,6 +56,14 @@ const IMAGE_PROVIDER_OPTIONS = [
   { id: "qwen", label: "Qwen" },
   { id: "ollama", label: "Ollama (local)" },
   { id: "comfyui", label: "ComfyUI (local GPU)" },
+  { id: "piapi", label: "PiAPI (Cloud)" },
+];
+
+const VIDEO_PROVIDER_OPTIONS = [
+  { id: "comfyui", label: "ComfyUI LTX 2.3 (local GPU)" },
+  { id: "piapi-kling", label: "PiAPI - Kling" },
+  { id: "piapi-hailuo", label: "PiAPI - Hailuo (Minimax)" },
+  { id: "piapi-seedance", label: "PiAPI - Seedance 2.0" },
 ];
 
 const TEXT_PROVIDER_OPTIONS = [
@@ -118,6 +132,7 @@ export default function SettingsPage() {
         openai: settings.openaiKey,
         claude: settings.claudeKey,
         qwen: settings.qwenKey,
+        piapi: settings.piapiKey,
       };
       const apiKey = keyMap[provider] ?? "";
 
@@ -264,6 +279,19 @@ export default function SettingsPage() {
           />
         </div>
 
+        <div className="field">
+          <label>PiAPI API key</label>
+          <input
+            type="password"
+            placeholder="pi-..."
+            value={settings.piapiKey}
+            onChange={(e) => update({ piapiKey: e.target.value })}
+          />
+          <span className="muted" style={{ fontSize: "12px" }}>
+            For cloud video (Kling, Hailuo, Seedance) and image (Flux, Midjourney) generation
+          </span>
+        </div>
+
         <div className="note">
           For Ollama, no key needed — just set the base URL below.
         </div>
@@ -329,6 +357,39 @@ export default function SettingsPage() {
           (m) => update({ defaultImageModel: m }),
           "Image model",
         )}
+      </div>
+
+      <div className="panel" style={{ marginBottom: "16px" }}>
+        <h2>Default Video Provider</h2>
+
+        <div className="field">
+          <label>Provider</label>
+          <select
+            value={settings.defaultVideoProvider}
+            onChange={(e) =>
+              update({ defaultVideoProvider: e.target.value, defaultVideoModel: "" })
+            }
+          >
+            {VIDEO_PROVIDER_OPTIONS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Video model / version</label>
+          <input
+            type="text"
+            placeholder="e.g. ltx-2.3, 2.6, v2.3"
+            value={settings.defaultVideoModel}
+            onChange={(e) => update({ defaultVideoModel: e.target.value })}
+          />
+          <span className="muted" style={{ fontSize: "12px" }}>
+            ComfyUI: ltx-2.3 &middot; Kling: 2.6, 2.5 &middot; Hailuo: v2.3, v2.3-fast
+          </span>
+        </div>
       </div>
 
       <div className="panel" style={{ marginBottom: "16px" }}>

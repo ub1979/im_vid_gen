@@ -320,6 +320,18 @@ export async function GET(request: Request) {
       }
       break;
 
+    case "piapi":
+      {
+        const { fetchPiAPIImageModels } = await import("@/lib/providers/piapi");
+        const models = fetchPiAPIImageModels();
+        result = {
+          ok: true,
+          models,
+          message: "PiAPI image models",
+        };
+      }
+      break;
+
     default:
       result = {
         ok: false,

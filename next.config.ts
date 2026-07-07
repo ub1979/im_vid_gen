@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
+              "media-src 'self' blob:",
               "connect-src 'self'",
               "font-src 'self'",
             ].join("; "),

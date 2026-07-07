@@ -4,6 +4,7 @@ import { openaiImageProvider, openaiTextLLM } from "./openai";
 import { qwenImageProvider } from "./qwen";
 import { ollamaImageProvider, ollamaTextLLM } from "./ollama";
 import { comfyuiImageProvider } from "./comfyui";
+import { piapiImageProvider } from "./piapi";
 import { claudeTextLLM } from "./claude";
 
 // ---- Descriptor type (for UI display) ----
@@ -22,6 +23,7 @@ const imageProviderMap: Record<string, ImageProvider> = {
   qwen: qwenImageProvider,
   ollama: ollamaImageProvider,
   comfyui: comfyuiImageProvider,
+  piapi: piapiImageProvider,
 };
 
 export const IMAGE_PROVIDERS: ProviderDescriptor[] = [
@@ -49,6 +51,11 @@ export const IMAGE_PROVIDERS: ProviderDescriptor[] = [
     id: "comfyui",
     label: "ComfyUI (local GPU)",
     capabilities: comfyuiImageProvider.capabilities,
+  },
+  {
+    id: "piapi",
+    label: "PiAPI (Cloud)",
+    capabilities: piapiImageProvider.capabilities,
   },
 ];
 

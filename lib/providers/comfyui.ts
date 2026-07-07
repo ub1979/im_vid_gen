@@ -16,14 +16,20 @@ const ASPECT_RATIOS: Record<string, [number, number]> = {
   "2:3": [832, 1216],
 };
 
+const VIDEO_RESOLUTIONS: Record<string, [number, number]> = {
+  "16:9": [768, 512],
+  "9:16": [512, 768],
+  "1:1": [512, 512],
+  "4:3": [640, 480],
+  "3:4": [480, 640],
+};
+
 interface ModelConfig {
   unet: string;
   clip: string;
   clipType: string;
   vae: string;
-  workflow: "qwen" | "flux2" | "flux2turbo" | "zimage";
-  lora?: string;
-  loraStrength?: number;
+  workflow: "qwen" | "flux2" | "zimage";
   defaultSteps: number;
 }
 
@@ -44,16 +50,6 @@ const MODEL_CONFIGS: Record<string, ModelConfig> = {
     workflow: "flux2",
     defaultSteps: 20,
   },
-  "flux2_dev_turbo": {
-    unet: "flux2_dev_fp8mixed.safetensors",
-    clip: "mistral_3_small_flux2_fp4_mixed.safetensors",
-    clipType: "flux2",
-    vae: "full_encoder_small_decoder.safetensors",
-    workflow: "flux2turbo",
-    lora: "Flux_2-Turbo-LoRA_comfyui.safetensors",
-    loraStrength: 1.0,
-    defaultSteps: 8,
-  },
   "z_image_turbo_bf16.safetensors": {
     unet: "z_image_turbo_bf16.safetensors",
     clip: "qwen_3_4b.safetensors",
@@ -68,7 +64,7 @@ function getModelConfig(model: string): ModelConfig {
   return MODEL_CONFIGS[model] ?? MODEL_CONFIGS["flux2_dev_fp8mixed.safetensors"];
 }
 
-// ---- Workflow builders ----
+// ---- Image workflow builders ----
 
 function buildQwenTxt2ImgWorkflow(
   prompt: string,
@@ -234,7 +230,6 @@ function buildFlux2RefWorkflow(
     },
   };
 
-  // Chain ReferenceLatent nodes for each reference image
   let lastConditioningNode = "5";
   let nodeId = 20;
 
@@ -263,7 +258,6 @@ function buildFlux2RefWorkflow(
     lastConditioningNode = refLatentId;
   }
 
-  // Sampler pipeline
   Object.assign(nodes, {
     "10": {
       class_type: "EmptyFlux2LatentImage",
@@ -367,6 +361,129 @@ function buildZImageTxt2ImgWorkflow(
   };
 }
 
+// ---- LTX 2.3 Video workflow builder ----
+
+export interface VideoGenRequest {
+  prompt: string;
+  imageBuffer: Buffer;
+  framePosition: "first" | "last";
+  baseUrl?: string;
+  width?: number;
+  height?: number;
+  length?: number;
+  steps?: number;
+  fps?: number;
+  aspectRatio?: string;
+}
+
+export interface VideoGenResult {
+  video: Buffer;
+  mime: string;
+}
+
+function buildLTXVideoWorkflow(
+  prompt: string,
+  imageFilename: string,
+  framePosition: "first" | "last",
+  width: number,
+  height: number,
+  length: number,
+  seed: number,
+  steps: number = 30,
+  fps: number = 25,
+): Record<string, unknown> {
+  const frameIdx = framePosition === "first" ? 0 : -1;
+
+  return {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: "ltx-2-3-22b-dev_transformer_only_fp8_input_scaled.safetensors", weight_dtype: "default" },
+    },
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: "ltx-2.3_text_projection_bf16.safetensors", type: "ltxv" },
+    },
+    "3": {
+      class_type: "VAELoader",
+      inputs: { vae_name: "LTX23_video_vae_bf16.safetensors" },
+    },
+    "4": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: prompt, clip: ["2", 0] },
+    },
+    "5": {
+      class_type: "CLIPTextEncode",
+      inputs: { text: "", clip: ["2", 0] },
+    },
+    "6": {
+      class_type: "LTXVConditioning",
+      inputs: { positive: ["4", 0], negative: ["5", 0], frame_rate: fps },
+    },
+    "7": {
+      class_type: "EmptyLTXVLatentVideo",
+      inputs: { width, height, length, batch_size: 1 },
+    },
+    "8": {
+      class_type: "LoadImage",
+      inputs: { image: imageFilename, upload: "image" },
+    },
+    "9": {
+      class_type: "LTXVPreprocess",
+      inputs: { image: ["8", 0], img_compression: 35 },
+    },
+    "10": {
+      class_type: "LTXVAddGuide",
+      inputs: {
+        positive: ["6", 0],
+        negative: ["6", 1],
+        vae: ["3", 0],
+        latent: ["7", 0],
+        image: ["9", 0],
+        frame_idx: frameIdx,
+        strength: 1.0,
+      },
+    },
+    "11": {
+      class_type: "LTXVScheduler",
+      inputs: { steps, max_shift: 2.05, base_shift: 0.95, stretch: true, terminal: 0.1, latent: ["10", 2] },
+    },
+    "12": {
+      class_type: "BasicGuider",
+      inputs: { model: ["1", 0], conditioning: ["10", 0] },
+    },
+    "13": {
+      class_type: "RandomNoise",
+      inputs: { noise_seed: seed },
+    },
+    "14": {
+      class_type: "KSamplerSelect",
+      inputs: { sampler_name: "euler" },
+    },
+    "15": {
+      class_type: "SamplerCustomAdvanced",
+      inputs: {
+        noise: ["13", 0],
+        guider: ["12", 0],
+        sampler: ["14", 0],
+        sigmas: ["11", 0],
+        latent_image: ["10", 2],
+      },
+    },
+    "16": {
+      class_type: "VAEDecode",
+      inputs: { samples: ["15", 0], vae: ["3", 0] },
+    },
+    "17": {
+      class_type: "CreateVideo",
+      inputs: { images: ["16", 0], fps },
+    },
+    "18": {
+      class_type: "SaveVideo",
+      inputs: { video: ["17", 0], filename_prefix: "video/comfyui_api", format: "mp4", codec: "h264" },
+    },
+  };
+}
+
 // ---- Upload reference images to ComfyUI ----
 
 async function uploadImage(
@@ -417,7 +534,7 @@ async function waitForResult(
   baseUrl: string,
   promptId: string,
   timeoutMs: number = 300_000,
-): Promise<string> {
+): Promise<{ filename: string; type: "image" | "video"; subfolder?: string }> {
   const start = Date.now();
   const pollInterval = 2000;
 
@@ -449,8 +566,11 @@ async function waitForResult(
     if (entry.outputs) {
       for (const nodeId of Object.keys(entry.outputs)) {
         const output = entry.outputs[nodeId];
+        if (output.videos && output.videos.length > 0) {
+          return { filename: output.videos[0].filename, type: "video", subfolder: output.videos[0].subfolder };
+        }
         if (output.images && output.images.length > 0) {
-          return output.images[0].filename;
+          return { filename: output.images[0].filename, type: "image" };
         }
       }
     }
@@ -461,13 +581,14 @@ async function waitForResult(
   throw new Error("ComfyUI generation timed out after 5 minutes");
 }
 
-async function downloadImage(
+async function downloadFile(
   baseUrl: string,
   filename: string,
+  subfolder?: string,
 ): Promise<Buffer> {
-  const res = await fetch(
-    `${baseUrl}/view?filename=${encodeURIComponent(filename)}&type=output`,
-  );
+  let url = `${baseUrl}/view?filename=${encodeURIComponent(filename)}&type=output`;
+  if (subfolder) url += `&subfolder=${encodeURIComponent(subfolder)}`;
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
       `ComfyUI download failed (${res.status}): ${await res.text()}`,
@@ -487,40 +608,13 @@ export async function fetchComfyUIModels(
     const data = await res.json();
     const unetInput = data?.UNETLoader?.input?.required?.unet_name;
     if (Array.isArray(unetInput) && Array.isArray(unetInput[0])) {
-      const models = unetInput[0] as string[];
-      if (models.includes("flux2_dev_fp8mixed.safetensors")) {
-        models.push("flux2_dev_turbo");
-      }
-      return models;
+      return unetInput[0] as string[];
     }
   } catch { /* skip */ }
   return [];
 }
 
-// ---- LoRA injection ----
-
-function applyLoraToWorkflow(workflow: Record<string, unknown>, config: ModelConfig): void {
-  if (!config.lora) return;
-  const loraNodeId = "99";
-  workflow[loraNodeId] = {
-    class_type: "LoraLoaderModelOnly",
-    inputs: {
-      model: ["1", 0],
-      lora_name: config.lora,
-      strength_model: config.loraStrength ?? 1.0,
-    },
-  };
-  // Rewire: find the node that consumes model ["1", 0] for guiding (BasicGuider)
-  for (const [id, node] of Object.entries(workflow)) {
-    if (id === loraNodeId) continue;
-    const n = node as { class_type?: string; inputs?: Record<string, unknown> };
-    if (n.class_type === "BasicGuider" && Array.isArray(n.inputs?.model) && n.inputs!.model[0] === "1") {
-      n.inputs!.model = [loraNodeId, 0];
-    }
-  }
-}
-
-// ---- Provider ----
+// ---- Image Provider ----
 
 export const comfyuiImageProvider: ImageProvider = {
   id: "comfyui",
@@ -543,7 +637,7 @@ export const comfyuiImageProvider: ImageProvider = {
 
     let workflow: Record<string, unknown>;
 
-    const isFlux2 = config.workflow === "flux2" || config.workflow === "flux2turbo";
+    const isFlux2 = config.workflow === "flux2";
 
     if (hasRefs && isFlux2) {
       const uploadedNames: string[] = [];
@@ -556,10 +650,8 @@ export const comfyuiImageProvider: ImageProvider = {
         uploadedNames.push(name);
       }
       workflow = buildFlux2RefWorkflow(req.prompt, config, uploadedNames, width, height, seed, config.defaultSteps);
-      if (config.lora) applyLoraToWorkflow(workflow, config);
     } else if (isFlux2) {
       workflow = buildFlux2Txt2ImgWorkflow(req.prompt, config, width, height, seed, config.defaultSteps);
-      if (config.lora) applyLoraToWorkflow(workflow, config);
     } else if (config.workflow === "zimage") {
       workflow = buildZImageTxt2ImgWorkflow(req.prompt, config, width, height, seed, config.defaultSteps);
     } else {
@@ -567,8 +659,8 @@ export const comfyuiImageProvider: ImageProvider = {
     }
 
     const promptId = await queuePrompt(baseUrl, workflow);
-    const outputFilename = await waitForResult(baseUrl, promptId);
-    const image = await downloadImage(baseUrl, outputFilename);
+    const result = await waitForResult(baseUrl, promptId);
+    const image = await downloadFile(baseUrl, result.filename, result.subfolder);
 
     return {
       image,
@@ -577,3 +669,28 @@ export const comfyuiImageProvider: ImageProvider = {
     };
   },
 };
+
+// ---- Video Provider ----
+
+export async function generateVideo(req: VideoGenRequest): Promise<VideoGenResult> {
+  const baseUrl = req.baseUrl || DEFAULT_BASE_URL;
+  const ar = req.aspectRatio || "16:9";
+  const [width, height] = VIDEO_RESOLUTIONS[ar] || [768, 512];
+  const length = req.length || 97;
+  const steps = req.steps || 30;
+  const fps = req.fps || 25;
+  const seed = Math.floor(Math.random() * 2 ** 32);
+
+  const imageFilename = await uploadImage(baseUrl, req.imageBuffer, `vidref_${Date.now()}.png`);
+
+  const workflow = buildLTXVideoWorkflow(
+    req.prompt, imageFilename, req.framePosition,
+    width, height, length, seed, steps, fps,
+  );
+
+  const promptId = await queuePrompt(baseUrl, workflow);
+  const result = await waitForResult(baseUrl, promptId, 600_000);
+  const video = await downloadFile(baseUrl, result.filename, result.subfolder);
+
+  return { video, mime: "video/mp4" };
+}

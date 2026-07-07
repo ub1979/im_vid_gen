@@ -9,6 +9,7 @@ const links = [
   { href: "/library", label: "Library" },
   { href: "/generate-character", label: "Generate Character" },
   { href: "/scene", label: "Generate Scene" },
+  { href: "/generate-video", label: "Generate Video" },
   { href: "/projects", label: "Projects" },
   { href: "/reimagine", label: "Reimagine" },
   { href: "/settings", label: "Settings" },
