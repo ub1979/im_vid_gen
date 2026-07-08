@@ -45,7 +45,7 @@ const DEFAULTS: SettingsState = {
   defaultTextProvider: "ollama",
   defaultTextModel: "glm-5.2:cloud",
   defaultVideoProvider: "comfyui",
-  defaultVideoModel: "ltx-2.3",
+  defaultVideoModel: "wan-2.1",
   defaultKeyframes: 12,
   maxImagesPerRun: 0,
 };
@@ -60,7 +60,7 @@ const IMAGE_PROVIDER_OPTIONS = [
 ];
 
 const VIDEO_PROVIDER_OPTIONS = [
-  { id: "comfyui", label: "ComfyUI LTX 2.3 (local GPU)" },
+  { id: "comfyui", label: "ComfyUI Wan 2.1 (local GPU)" },
   { id: "piapi-kling", label: "PiAPI - Kling" },
   { id: "piapi-hailuo", label: "PiAPI - Hailuo (Minimax)" },
   { id: "piapi-seedance", label: "PiAPI - Seedance 2.0" },
@@ -382,12 +382,12 @@ export default function SettingsPage() {
           <label>Video model / version</label>
           <input
             type="text"
-            placeholder="e.g. ltx-2.3, 2.6, v2.3"
+            placeholder="e.g. wan-2.1, 2.6, v2.3"
             value={settings.defaultVideoModel}
             onChange={(e) => update({ defaultVideoModel: e.target.value })}
           />
           <span className="muted" style={{ fontSize: "12px" }}>
-            ComfyUI: ltx-2.3 &middot; Kling: 2.6, 2.5 &middot; Hailuo: v2.3, v2.3-fast
+            ComfyUI: wan-2.1 &middot; Kling: 2.6, 2.5 &middot; Hailuo: v2.3, v2.3-fast
           </span>
         </div>
       </div>

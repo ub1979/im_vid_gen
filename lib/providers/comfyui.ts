@@ -17,11 +17,11 @@ const ASPECT_RATIOS: Record<string, [number, number]> = {
 };
 
 const VIDEO_RESOLUTIONS: Record<string, [number, number]> = {
-  "16:9": [768, 512],
-  "9:16": [512, 768],
-  "1:1": [512, 512],
-  "4:3": [640, 480],
-  "3:4": [480, 640],
+  "16:9": [832, 480],
+  "9:16": [480, 832],
+  "1:1": [720, 720],
+  "4:3": [720, 544],
+  "3:4": [544, 720],
 };
 
 interface ModelConfig {
@@ -361,12 +361,12 @@ function buildZImageTxt2ImgWorkflow(
   };
 }
 
-// ---- LTX 2.3 Video workflow builder ----
+// ---- Wan 2.1 Video workflow builder ----
 
 export interface VideoGenRequest {
   prompt: string;
-  imageBuffer: Buffer;
-  framePosition: "first" | "last";
+  firstFrameBuffer?: Buffer;
+  lastFrameBuffer?: Buffer;
   baseUrl?: string;
   width?: number;
   height?: number;
@@ -381,31 +381,29 @@ export interface VideoGenResult {
   mime: string;
 }
 
-function buildLTXVideoWorkflow(
+function buildWanVideoWorkflow(
   prompt: string,
-  imageFilename: string,
-  framePosition: "first" | "last",
+  firstFrameFilename: string | null,
+  lastFrameFilename: string | null,
   width: number,
   height: number,
   length: number,
   seed: number,
   steps: number = 30,
-  fps: number = 25,
+  fps: number = 16,
 ): Record<string, unknown> {
-  const frameIdx = framePosition === "first" ? 0 : -1;
-
-  return {
+  const nodes: Record<string, unknown> = {
     "1": {
       class_type: "UNETLoader",
-      inputs: { unet_name: "ltx-2-3-22b-dev_transformer_only_fp8_input_scaled.safetensors", weight_dtype: "default" },
+      inputs: { unet_name: "wan2.1_flf2v_720p_14B_fp8_e4m3fn.safetensors", weight_dtype: "fp8_e4m3fn" },
     },
     "2": {
       class_type: "CLIPLoader",
-      inputs: { clip_name: "ltx-2.3_text_projection_bf16.safetensors", type: "ltxv" },
+      inputs: { clip_name: "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type: "wan" },
     },
     "3": {
       class_type: "VAELoader",
-      inputs: { vae_name: "LTX23_video_vae_bf16.safetensors" },
+      inputs: { vae_name: "wan_2.1_vae.safetensors" },
     },
     "4": {
       class_type: "CLIPTextEncode",
@@ -416,72 +414,52 @@ function buildLTXVideoWorkflow(
       inputs: { text: "", clip: ["2", 0] },
     },
     "6": {
-      class_type: "LTXVConditioning",
-      inputs: { positive: ["4", 0], negative: ["5", 0], frame_rate: fps },
-    },
-    "7": {
-      class_type: "EmptyLTXVLatentVideo",
-      inputs: { width, height, length, batch_size: 1 },
-    },
-    "8": {
-      class_type: "LoadImage",
-      inputs: { image: imageFilename, upload: "image" },
-    },
-    "9": {
-      class_type: "LTXVPreprocess",
-      inputs: { image: ["8", 0], img_compression: 35 },
-    },
-    "10": {
-      class_type: "LTXVAddGuide",
-      inputs: {
-        positive: ["6", 0],
-        negative: ["6", 1],
-        vae: ["3", 0],
-        latent: ["7", 0],
-        image: ["9", 0],
-        frame_idx: frameIdx,
-        strength: 1.0,
-      },
-    },
-    "11": {
-      class_type: "LTXVScheduler",
-      inputs: { steps, max_shift: 2.05, base_shift: 0.95, stretch: true, terminal: 0.1, latent: ["10", 2] },
-    },
-    "12": {
-      class_type: "BasicGuider",
-      inputs: { model: ["1", 0], conditioning: ["10", 0] },
-    },
-    "13": {
-      class_type: "RandomNoise",
-      inputs: { noise_seed: seed },
-    },
-    "14": {
-      class_type: "KSamplerSelect",
-      inputs: { sampler_name: "euler" },
-    },
-    "15": {
-      class_type: "SamplerCustomAdvanced",
-      inputs: {
-        noise: ["13", 0],
-        guider: ["12", 0],
-        sampler: ["14", 0],
-        sigmas: ["11", 0],
-        latent_image: ["10", 2],
-      },
-    },
-    "16": {
-      class_type: "VAEDecode",
-      inputs: { samples: ["15", 0], vae: ["3", 0] },
-    },
-    "17": {
-      class_type: "CreateVideo",
-      inputs: { images: ["16", 0], fps },
-    },
-    "18": {
-      class_type: "SaveVideo",
-      inputs: { video: ["17", 0], filename_prefix: "video/comfyui_api", format: "mp4", codec: "h264" },
+      class_type: "CLIPVisionLoader",
+      inputs: { clip_name: "clip_vision_h.safetensors" },
     },
   };
+
+  // Use WanFirstLastFrameToVideo for first+last or first-only
+  const videoNode: Record<string, unknown> = {
+    class_type: "WanFirstLastFrameToVideo",
+    inputs: {
+      positive: ["4", 0],
+      negative: ["5", 0],
+      vae: ["3", 0],
+      width,
+      height,
+      length,
+      batch_size: 1,
+    },
+  };
+
+  if (firstFrameFilename) {
+    nodes["20"] = { class_type: "LoadImage", inputs: { image: firstFrameFilename, upload: "image" } };
+    nodes["21"] = { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["6", 0], image: ["20", 0], crop: "center" } };
+    (videoNode.inputs as Record<string, unknown>).start_image = ["20", 0];
+    (videoNode.inputs as Record<string, unknown>).clip_vision_start_image = ["21", 0];
+  }
+
+  if (lastFrameFilename) {
+    nodes["30"] = { class_type: "LoadImage", inputs: { image: lastFrameFilename, upload: "image" } };
+    nodes["31"] = { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["6", 0], image: ["30", 0], crop: "center" } };
+    (videoNode.inputs as Record<string, unknown>).end_image = ["30", 0];
+    (videoNode.inputs as Record<string, unknown>).clip_vision_end_image = ["31", 0];
+  }
+
+  nodes["10"] = videoNode;
+
+  Object.assign(nodes, {
+    "11": { class_type: "KSampler", inputs: {
+      seed, steps, cfg: 5.0, sampler_name: "uni_pc", scheduler: "simple", denoise: 1.0,
+      model: ["1", 0], positive: ["10", 0], negative: ["10", 1], latent_image: ["10", 2],
+    }},
+    "12": { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } },
+    "13": { class_type: "CreateVideo", inputs: { images: ["12", 0], fps } },
+    "14": { class_type: "SaveVideo", inputs: { video: ["13", 0], filename_prefix: "video/comfyui_api", format: "mp4", codec: "h264" } },
+  });
+
+  return nodes;
 }
 
 // ---- Upload reference images to ComfyUI ----
@@ -570,7 +548,9 @@ async function waitForResult(
           return { filename: output.videos[0].filename, type: "video", subfolder: output.videos[0].subfolder };
         }
         if (output.images && output.images.length > 0) {
-          return { filename: output.images[0].filename, type: "image" };
+          const item = output.images[0];
+          const isVideo = item.filename.endsWith(".mp4") || item.filename.endsWith(".webm");
+          return { filename: item.filename, type: isVideo ? "video" : "image", subfolder: item.subfolder };
         }
       }
     }
@@ -675,16 +655,24 @@ export const comfyuiImageProvider: ImageProvider = {
 export async function generateVideo(req: VideoGenRequest): Promise<VideoGenResult> {
   const baseUrl = req.baseUrl || DEFAULT_BASE_URL;
   const ar = req.aspectRatio || "16:9";
-  const [width, height] = VIDEO_RESOLUTIONS[ar] || [768, 512];
-  const length = req.length || 97;
+  const [width, height] = VIDEO_RESOLUTIONS[ar] || [832, 480];
+  const length = req.length || 81;
   const steps = req.steps || 30;
-  const fps = req.fps || 25;
+  const fps = req.fps || 16;
   const seed = Math.floor(Math.random() * 2 ** 32);
 
-  const imageFilename = await uploadImage(baseUrl, req.imageBuffer, `vidref_${Date.now()}.png`);
+  let firstFrameFilename: string | null = null;
+  let lastFrameFilename: string | null = null;
 
-  const workflow = buildLTXVideoWorkflow(
-    req.prompt, imageFilename, req.framePosition,
+  if (req.firstFrameBuffer) {
+    firstFrameFilename = await uploadImage(baseUrl, req.firstFrameBuffer, `vidref_first_${Date.now()}.png`);
+  }
+  if (req.lastFrameBuffer) {
+    lastFrameFilename = await uploadImage(baseUrl, req.lastFrameBuffer, `vidref_last_${Date.now()}.png`);
+  }
+
+  const workflow = buildWanVideoWorkflow(
+    req.prompt, firstFrameFilename, lastFrameFilename,
     width, height, length, seed, steps, fps,
   );
 

@@ -4,6 +4,7 @@ import type {
   ImageGenRequest,
   ImageGenResult,
   TextLLM,
+  TextGenRequest,
   TextGenWithImagesRequest,
   SegmentRequest,
   Scene,
@@ -92,6 +93,33 @@ export const ollamaImageProvider: ImageProvider = {
 
 export const ollamaTextLLM: TextLLM = {
   id: "ollama",
+
+  async generateText(req: TextGenRequest): Promise<string> {
+    const baseUrl = req.baseUrl || DEFAULT_BASE_URL;
+
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: req.model,
+        messages: [
+          { role: "system", content: req.systemPrompt },
+          { role: "user", content: req.userPrompt },
+        ],
+        stream: false,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Ollama chat failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    const text = data.message?.content;
+    if (!text) throw new Error("Ollama returned no text content");
+    return text;
+  },
 
   async generateTextWithImages(req: TextGenWithImagesRequest): Promise<string> {
     const baseUrl = req.baseUrl || DEFAULT_BASE_URL;
