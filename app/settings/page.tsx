@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { PIAPI_VIDEO_CATALOG, findModelDef } from "@/lib/piapi-video-catalog";
 
 interface SettingsState {
   geminiKey: string;
@@ -59,12 +60,6 @@ const IMAGE_PROVIDER_OPTIONS = [
   { id: "piapi", label: "PiAPI (Cloud)" },
 ];
 
-const VIDEO_PROVIDER_OPTIONS = [
-  { id: "comfyui", label: "ComfyUI Wan 2.1 (local GPU)" },
-  { id: "piapi-kling", label: "PiAPI - Kling" },
-  { id: "piapi-hailuo", label: "PiAPI - Hailuo (Minimax)" },
-  { id: "piapi-seedance", label: "PiAPI - Seedance 2.0" },
-];
 
 const TEXT_PROVIDER_OPTIONS = [
   { id: "gemini", label: "Gemini" },
@@ -366,30 +361,68 @@ export default function SettingsPage() {
           <label>Provider</label>
           <select
             value={settings.defaultVideoProvider}
-            onChange={(e) =>
-              update({ defaultVideoProvider: e.target.value, defaultVideoModel: "" })
-            }
+            onChange={(e) => {
+              const def = findModelDef(e.target.value);
+              update({
+                defaultVideoProvider: e.target.value,
+                defaultVideoModel: def?.defaultVariant || "",
+              });
+            }}
           >
-            {VIDEO_PROVIDER_OPTIONS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
+            <optgroup label="Local">
+              <option value="comfyui">ComfyUI Wan 2.1 (local GPU)</option>
+            </optgroup>
+            <optgroup label="PiAPI Cloud">
+              {PIAPI_VIDEO_CATALOG.map((m) => (
+                <option key={m.providerId} value={m.providerId}>
+                  {m.label}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
 
-        <div className="field">
-          <label>Video model / version</label>
-          <input
-            type="text"
-            placeholder="e.g. wan-2.1, 2.6, v2.3"
-            value={settings.defaultVideoModel}
-            onChange={(e) => update({ defaultVideoModel: e.target.value })}
-          />
-          <span className="muted" style={{ fontSize: "12px" }}>
-            ComfyUI: wan-2.1 &middot; Kling: 2.6, 2.5 &middot; Hailuo: v2.3, v2.3-fast
-          </span>
-        </div>
+        {(() => {
+          const def = findModelDef(settings.defaultVideoProvider);
+          if (!def) return null;
+          return (
+            <>
+              {def.variants.length > 1 && (
+                <div className="field">
+                  <label>Version / Variant</label>
+                  <select
+                    value={settings.defaultVideoModel}
+                    onChange={(e) => update({ defaultVideoModel: e.target.value })}
+                  >
+                    {def.variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {def.modes && (
+                <div className="field">
+                  <label>Mode</label>
+                  <select
+                    value={settings.defaultVideoModel?.includes("pro") ? "pro" : def.defaultMode || "std"}
+                    disabled
+                  >
+                    {def.modes.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="muted" style={{ fontSize: "12px" }}>
+                    Mode is selected per-generation on the Video page
+                  </span>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <div className="panel" style={{ marginBottom: "16px" }}>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { LibraryCharacter } from "@/lib/types";
+import { PIAPI_VIDEO_CATALOG, findModelDef } from "@/lib/piapi-video-catalog";
 import MentionTextarea from "@/components/MentionTextarea";
 
 const STORAGE_KEY = "image_creator_settings";
@@ -26,12 +27,6 @@ function loadSettings() {
   } catch { return DEFAULTS; }
 }
 
-const VIDEO_PROVIDERS = [
-  { id: "comfyui", label: "ComfyUI Wan 2.1 (local GPU)" },
-  { id: "piapi-kling", label: "PiAPI - Kling" },
-  { id: "piapi-hailuo", label: "PiAPI - Hailuo (Minimax)" },
-  { id: "piapi-seedance", label: "PiAPI - Seedance 2.0" },
-];
 
 interface ProjectScene {
   index: number;
@@ -62,6 +57,16 @@ interface FrameSelection {
   uploadBase64: string | null;
 }
 
+interface VideoMeta {
+  videoId: string;
+  createdAt: string;
+  prompt: string;
+  enhancedPrompt: string | null;
+  firstFrameSource: FrameImageSource;
+  lastFrameSource: FrameImageSource;
+  generation: Record<string, string | number>;
+}
+
 const emptyFrame = (): FrameSelection => ({
   sourceType: "project",
   projectId: "",
@@ -83,7 +88,8 @@ export default function GenerateVideoPage() {
   const lastFileRef = useRef<HTMLInputElement>(null);
 
   const [videoProvider, setVideoProvider] = useState("comfyui");
-  const [videoModel, setVideoModel] = useState("");
+  const [videoVariant, setVideoVariant] = useState("");
+  const [videoMode, setVideoMode] = useState("");
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [videoLength, setVideoLength] = useState(81);
@@ -93,19 +99,28 @@ export default function GenerateVideoPage() {
 
   const [mentionedChars, setMentionedChars] = useState<Set<string>>(new Set());
 
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhancedPrompt, setEnhancedPrompt] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     videoUrl: string;
-    enhancedPrompt?: string;
     generation: Record<string, string | number>;
   } | null>(null);
+  const [videoHistory, setVideoHistory] = useState<VideoMeta[]>([]);
+  const [extractingFrame, setExtractingFrame] = useState(false);
 
   useEffect(() => {
     const s = loadSettings();
     setSettings(s);
-    setVideoProvider(s.defaultVideoProvider || "comfyui");
-    setVideoModel(s.defaultVideoModel || "");
+    const provider = s.defaultVideoProvider || "comfyui";
+    setVideoProvider(provider);
+    const def = findModelDef(provider);
+    if (def) {
+      setVideoVariant(def.defaultVariant);
+      setVideoMode(def.defaultMode || "");
+      if (def.durations.length > 0) setDuration(def.defaultDuration);
+    }
     fetch("/api/projects").then(r => r.json()).then((p: Project[]) => {
       setProjects(p);
       const firstProj = p[0]?.id || "";
@@ -118,11 +133,115 @@ export default function GenerateVideoPage() {
       setFirstFrame(f => ({ ...f, charId: firstChar }));
       setLastFrame(f => ({ ...f, charId: firstChar }));
     }).catch(() => {});
+    fetch("/api/generate-video?list=true").then(r => r.json()).then(d => {
+      setVideoHistory(d.videos || []);
+    }).catch(() => {});
   }, []);
 
   const isPiAPI = videoProvider.startsWith("piapi");
+  const modelDef = isPiAPI ? findModelDef(videoProvider) : null;
   const textProviderId = settings.defaultTextProvider || "ollama";
   const textModelName = settings.defaultTextModel || "";
+
+  function refreshHistory() {
+    fetch("/api/generate-video?list=true").then(r => r.json()).then(d => {
+      setVideoHistory(d.videos || []);
+    }).catch(() => {});
+  }
+
+  function sourceToFrame(src: FrameImageSource): FrameSelection {
+    if (!src) return emptyFrame();
+    if (src.type === "project") {
+      return { ...emptyFrame(), sourceType: "project", projectId: src.projectId, sceneIndex: src.sceneIndex };
+    }
+    if (src.type === "library") {
+      return { ...emptyFrame(), sourceType: "library", charId: src.characterId };
+    }
+    return emptyFrame();
+  }
+
+  function loadFromHistory(meta: VideoMeta) {
+    setPrompt(meta.prompt);
+    setEnhancedPrompt(meta.enhancedPrompt || null);
+
+    const provider = String(meta.generation.provider || "comfyui");
+    setVideoProvider(provider);
+    const def = findModelDef(provider);
+    if (def) {
+      setVideoVariant(String(meta.generation.variant || def.defaultVariant));
+      setVideoMode(String(meta.generation.mode || def.defaultMode || ""));
+      setDuration(Number(meta.generation.duration) || def.defaultDuration);
+    }
+
+    setAspectRatio(String(meta.generation.aspectRatio || "16:9"));
+    if (meta.generation.length) setVideoLength(Number(meta.generation.length));
+    if (meta.generation.steps) setSteps(Number(meta.generation.steps));
+    if (meta.generation.fps) setFps(Number(meta.generation.fps));
+
+    setFirstFrame(sourceToFrame(meta.firstFrameSource));
+    if (meta.lastFrameSource) {
+      setUseLastFrame(true);
+      setLastFrame(sourceToFrame(meta.lastFrameSource));
+    } else {
+      setUseLastFrame(false);
+    }
+
+    const projId = meta.firstFrameSource?.type === "project" ? meta.firstFrameSource.projectId
+      : meta.lastFrameSource?.type === "project" ? (meta.lastFrameSource as { projectId: string }).projectId : null;
+    const videoUrl = projId
+      ? `/api/generate-video?id=${meta.videoId}&project=${projId}`
+      : `/api/generate-video?id=${meta.videoId}`;
+    setResult({ videoUrl, generation: meta.generation });
+    setError(null);
+  }
+
+  async function useVideoLastFrame(videoUrl: string) {
+    setExtractingFrame(true);
+    try {
+      const params = new URL(videoUrl, window.location.origin).searchParams;
+      const id = params.get("id");
+      const project = params.get("project");
+      if (!id) throw new Error("No video id");
+
+      const doUpscale = isPiAPI && !!settings.piapiKey;
+      const frameUrl = `/api/video-frame?id=${id}&frame=last${project ? `&project=${project}` : ""}${doUpscale ? "&upscale=true" : ""}`;
+      const headers: Record<string, string> = {};
+      if (doUpscale) headers["x-provider-key"] = settings.piapiKey;
+
+      const res = await fetch(frameUrl, { headers });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to extract frame");
+      }
+
+      const blob = await res.blob();
+      const reader = new FileReader();
+      const b64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const preview = URL.createObjectURL(blob);
+      setFirstFrame({ sourceType: "upload", projectId: "", sceneIndex: 0, charId: "", uploadPreview: preview, uploadBase64: b64 });
+      setEnhancedPrompt(null);
+      setResult(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Frame extraction failed");
+    } finally {
+      setExtractingFrame(false);
+    }
+  }
+
+  function handleProviderChange(newProvider: string) {
+    setVideoProvider(newProvider);
+    const def = findModelDef(newProvider);
+    if (def) {
+      setVideoVariant(def.defaultVariant);
+      setVideoMode(def.defaultMode || "");
+      if (def.durations.length > 0) setDuration(def.defaultDuration);
+    }
+  }
 
   function apiKeyFor(providerId: string): string {
     const map: Record<string, string> = {
@@ -181,8 +300,62 @@ export default function GenerateVideoPage() {
     reader.readAsDataURL(file);
   }
 
+  function getTextHeaders(): Record<string, string> {
+    const tpId = settings.defaultTextProvider || "ollama";
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tpId === "ollama" && settings.ollamaUrl) headers["x-text-base-url"] = settings.ollamaUrl;
+    const textKey = apiKeyFor(tpId);
+    if (textKey) headers["x-text-provider-key"] = textKey;
+    return headers;
+  }
+
+  function getFrameMode(): "first" | "last" | "both" {
+    const hasFirst = !!getPreviewUrl(firstFrame);
+    const hasLast = useLastFrame && !!getPreviewUrl(lastFrame);
+    return hasFirst && hasLast ? "both" : hasFirst ? "first" : "last";
+  }
+
+  async function handleEnhance() {
+    if (!prompt.trim()) { setError("Enter a prompt first"); return; }
+    const tpId = settings.defaultTextProvider || "ollama";
+    const tModel = settings.defaultTextModel || "";
+    if (!tpId || !tModel) { setError("Set a Text LLM in Settings first"); return; }
+
+    setEnhancing(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/enhance-video-prompt", {
+        method: "POST",
+        headers: getTextHeaders(),
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          textProviderId: tpId,
+          textModel: tModel,
+          frameMode: getFrameMode(),
+          characters: library
+            .filter(c => mentionedChars.has(c.id))
+            .map(c => ({ label: c.label, description: c.description || "" })),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server returned ${res.status}`);
+      }
+
+      const data = await res.json();
+      setEnhancedPrompt(data.enhanced);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Prompt enhancement failed");
+    } finally {
+      setEnhancing(false);
+    }
+  }
+
   async function handleGenerate() {
-    if (!prompt.trim()) { setError("Enter a prompt"); return; }
+    const finalPrompt = enhancedPrompt || prompt.trim();
+    if (!finalPrompt) { setError("Enter a prompt"); return; }
     if (isPiAPI && !settings.piapiKey) { setError("PiAPI API key required. Set it in Settings."); return; }
 
     const firstSrc = buildSource(firstFrame);
@@ -193,32 +366,23 @@ export default function GenerateVideoPage() {
     setError(null);
     setResult(null);
 
-    const textProviderId = settings.defaultTextProvider || "ollama";
-    const textModel = settings.defaultTextModel || "";
-
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (settings.comfyuiUrl) headers["x-base-url"] = settings.comfyuiUrl;
     if (isPiAPI && settings.piapiKey) headers["x-provider-key"] = settings.piapiKey;
-    if (textProviderId === "ollama" && settings.ollamaUrl) headers["x-text-base-url"] = settings.ollamaUrl;
-    const textKey = apiKeyFor(textProviderId);
-    if (textKey) headers["x-text-provider-key"] = textKey;
 
     try {
       const res = await fetch("/api/generate-video", {
         method: "POST",
         headers,
         body: JSON.stringify({
-          prompt: prompt.trim(),
+          prompt: finalPrompt,
+          rawPrompt: enhancedPrompt ? prompt.trim() : undefined,
           firstFrameSource: firstSrc,
           lastFrameSource: lastSrc,
           aspectRatio,
           videoProvider,
-          videoModel,
-          textProviderId,
-          textModel,
-          characters: library
-            .filter(c => mentionedChars.has(c.id))
-            .map(c => ({ label: c.label, description: c.description || "" })),
+          videoModel: videoVariant,
+          videoMode: videoMode || undefined,
           ...(isPiAPI ? { duration } : { length: videoLength, steps, fps }),
         }),
       });
@@ -229,7 +393,8 @@ export default function GenerateVideoPage() {
       }
 
       const data = await res.json();
-      setResult({ videoUrl: data.videoPath, enhancedPrompt: data.enhancedPrompt, generation: data.generation });
+      setResult({ videoUrl: data.videoPath, generation: data.generation });
+      refreshHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Video generation failed");
     } finally {
@@ -240,7 +405,10 @@ export default function GenerateVideoPage() {
   const firstPreview = getPreviewUrl(firstFrame);
   const lastPreview = useLastFrame ? getPreviewUrl(lastFrame) : null;
   const durationSeconds = isPiAPI ? duration : Number(((videoLength - 1) / fps).toFixed(1));
-  const providerLabel = VIDEO_PROVIDERS.find(p => p.id === videoProvider)?.label || videoProvider;
+  const providerLabel = videoProvider === "comfyui"
+    ? "ComfyUI Wan 2.1 (local GPU)"
+    : modelDef ? `PiAPI — ${modelDef.label}` : videoProvider;
+  const variantLabel = modelDef?.variants.find(v => v.id === videoVariant)?.label || videoVariant;
 
   function renderFramePicker(
     label: string,
@@ -355,11 +523,13 @@ export default function GenerateVideoPage() {
 
       <div className="note" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 12 }}>
         <strong>Video:</strong> {providerLabel}
-        {videoModel && <> &middot; {videoModel}</>}
+        {variantLabel && <> &middot; {variantLabel}</>}
+        {videoMode && modelDef?.modes && <> &middot; {modelDef.modes.find(m => m.id === videoMode)?.label}</>}
         &nbsp;|&nbsp;
         <strong>Text LLM:</strong> {textProviderId} / {textModelName || "default"}
         &nbsp;|&nbsp;
-        <strong>Output:</strong> {aspectRatio} &middot; ~{durationSeconds}s
+        <strong>Output:</strong> {aspectRatio}
+        {(durationSeconds > 0) && <> &middot; ~{durationSeconds}s</>}
         {useLastFrame && " (first + last frame)"}
       </div>
 
@@ -375,7 +545,10 @@ export default function GenerateVideoPage() {
           {renderFramePicker("First Frame", firstFrame, setFirstFrame, firstFileRef, firstPreview)}
 
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
-            <input type="checkbox" checked={useLastFrame} onChange={e => setUseLastFrame(e.target.checked)} style={{ width: "auto" }} />
+            <input type="checkbox" checked={useLastFrame} onChange={e => {
+              setUseLastFrame(e.target.checked);
+              if (e.target.checked) setLastFrame({ ...firstFrame });
+            }} style={{ width: "auto" }} />
             <span style={{ fontSize: 13 }}>Also set last frame</span>
           </label>
 
@@ -385,8 +558,15 @@ export default function GenerateVideoPage() {
 
           <div className="field">
             <label>Video Provider</label>
-            <select value={videoProvider} onChange={e => setVideoProvider(e.target.value)}>
-              {VIDEO_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            <select value={videoProvider} onChange={e => handleProviderChange(e.target.value)}>
+              <optgroup label="Local">
+                <option value="comfyui">ComfyUI Wan 2.1 (local GPU)</option>
+              </optgroup>
+              <optgroup label="PiAPI Cloud">
+                {PIAPI_VIDEO_CATALOG.map(m => (
+                  <option key={m.providerId} value={m.providerId}>{m.label}</option>
+                ))}
+              </optgroup>
             </select>
           </div>
 
@@ -394,13 +574,33 @@ export default function GenerateVideoPage() {
             <label>Prompt</label>
             <MentionTextarea
               value={prompt}
-              onChange={setPrompt}
+              onChange={v => { setPrompt(v); setEnhancedPrompt(null); }}
               characters={library}
               onMention={c => setMentionedChars(prev => new Set(prev).add(c.id))}
               style={{ minHeight: 80 }}
               placeholder="Describe the motion and action... Type @ to reference a character"
             />
           </div>
+
+          <button className="btn" style={{ width: "100%", marginBottom: 8 }}
+            onClick={handleEnhance}
+            disabled={enhancing || !prompt.trim() || generating}>
+            {enhancing ? "Enhancing with LLM..." : "Enhance Prompt with LLM"}
+          </button>
+
+          {enhancedPrompt && (
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Enhanced Prompt (editable)</span>
+                <button className="btn btn-sm btn-ghost" onClick={() => setEnhancedPrompt(null)}>discard</button>
+              </label>
+              <textarea
+                value={enhancedPrompt}
+                onChange={e => setEnhancedPrompt(e.target.value)}
+                style={{ minHeight: 100, fontSize: 12, lineHeight: 1.5 }}
+              />
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <div className="field" style={{ flex: 1, minWidth: 120 }}>
@@ -438,20 +638,38 @@ export default function GenerateVideoPage() {
             </div>
           )}
 
-          {isPiAPI && (
+          {isPiAPI && modelDef && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div className="field" style={{ flex: 1, minWidth: 100 }}>
-                <label>Duration</label>
-                <select value={duration} onChange={e => setDuration(Number(e.target.value))}>
-                  <option value={5}>5 seconds</option>
-                  <option value={10}>10 seconds</option>
-                </select>
-              </div>
-              <div className="field" style={{ flex: 1, minWidth: 120 }}>
-                <label>Model Version</label>
-                <input type="text" value={videoModel} onChange={e => setVideoModel(e.target.value)}
-                  placeholder={videoProvider === "piapi-kling" ? "2.6" : videoProvider === "piapi-hailuo" ? "v2.3" : ""} />
-              </div>
+              {modelDef.variants.length > 1 && (
+                <div className="field" style={{ flex: 1, minWidth: 120 }}>
+                  <label>Version</label>
+                  <select value={videoVariant} onChange={e => setVideoVariant(e.target.value)}>
+                    {modelDef.variants.map(v => (
+                      <option key={v.id} value={v.id}>{v.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {modelDef.modes && (
+                <div className="field" style={{ flex: 1, minWidth: 100 }}>
+                  <label>Mode</label>
+                  <select value={videoMode} onChange={e => setVideoMode(e.target.value)}>
+                    {modelDef.modes.map(m => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {modelDef.durations.length > 0 && (
+                <div className="field" style={{ flex: 1, minWidth: 100 }}>
+                  <label>Duration</label>
+                  <select value={duration} onChange={e => setDuration(Number(e.target.value))}>
+                    {modelDef.durations.map(d => (
+                      <option key={d} value={d}>{d} seconds</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
@@ -463,8 +681,8 @@ export default function GenerateVideoPage() {
 
           <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }}
             onClick={handleGenerate}
-            disabled={generating || !prompt.trim() || (!firstPreview && !lastPreview) || (isPiAPI && !settings.piapiKey)}>
-            {generating ? "Generating Video..." : "Generate Video"}
+            disabled={generating || enhancing || !prompt.trim() || (!firstPreview && !lastPreview) || (isPiAPI && !settings.piapiKey)}>
+            {generating ? "Generating Video..." : enhancedPrompt ? "Generate Video (enhanced)" : "Generate Video (raw prompt)"}
           </button>
         </div>
 
@@ -491,16 +709,24 @@ export default function GenerateVideoPage() {
                 {result.generation.steps && <> &middot; {result.generation.steps} steps</>}
                 {" "}&middot; {result.generation.aspectRatio || "16:9"}
               </div>
-              {result.enhancedPrompt && result.enhancedPrompt !== prompt && (
+              {enhancedPrompt && (
                 <details style={{ marginTop: 8 }}>
-                  <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Enhanced prompt</summary>
-                  <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-dim)" }}>{result.enhancedPrompt}</p>
+                  <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Prompt used</summary>
+                  <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-dim)" }}>{enhancedPrompt}</p>
                 </details>
               )}
-              <a href={result.videoUrl} download className="btn"
-                style={{ display: "block", textAlign: "center", marginTop: 8 }}>
-                Download Video
-              </a>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <a href={result.videoUrl} download className="btn" style={{ flex: 1, textAlign: "center" }}>
+                  Download
+                </a>
+                <button className="btn btn-primary" style={{ flex: 1 }}
+                  onClick={() => useVideoLastFrame(result.videoUrl)}
+                  disabled={extractingFrame}>
+                  {extractingFrame
+                    ? (isPiAPI && settings.piapiKey ? "Extracting & upscaling..." : "Extracting...")
+                    : (isPiAPI && settings.piapiKey ? "Last frame → upscale → next" : "Last frame → next first frame")}
+                </button>
+              </div>
             </div>
           )}
           {!generating && !result && (
@@ -510,6 +736,67 @@ export default function GenerateVideoPage() {
           )}
         </div>
       </div>
+
+      {videoHistory.length > 0 && (
+        <div className="panel" style={{ marginTop: 16 }}>
+          <h2>Video History</h2>
+          <p className="muted" style={{ fontSize: 11, marginTop: 0, marginBottom: 12 }}>
+            Click a video to reload its settings. {videoHistory.length} video{videoHistory.length !== 1 ? "s" : ""} generated.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+            {videoHistory.map(v => {
+              const fs = v.firstFrameSource;
+              const ls = v.lastFrameSource;
+              const firstLabel = fs?.type === "project" ? `Scene ${(fs.sceneIndex ?? 0) + 1}` : fs?.type === "library" ? "Library" : fs?.type === "base64" ? "Upload" : "—";
+              const lastLabel = ls?.type === "project" ? `Scene ${(ls.sceneIndex ?? 0) + 1}` : ls?.type === "library" ? "Library" : ls ? "Upload" : "—";
+              const vidProjId = fs?.type === "project" ? fs.projectId : ls?.type === "project" ? (ls as { projectId: string }).projectId : null;
+              const projName = vidProjId ? projects.find(p => p.id === vidProjId)?.name || vidProjId : null;
+              const vidSrc = vidProjId
+                ? `/api/generate-video?id=${v.videoId}&project=${vidProjId}`
+                : `/api/generate-video?id=${v.videoId}`;
+              const date = new Date(v.createdAt);
+              const timeStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+              return (
+                <div key={v.videoId}
+                  onClick={() => loadFromHistory(v)}
+                  style={{
+                    cursor: "pointer", borderRadius: 8, overflow: "hidden",
+                    border: "1px solid var(--border)", background: "var(--surface-2)",
+                    transition: "border-color 0.15s",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+                >
+                  <video
+                    src={vidSrc}
+                    muted
+                    preload="metadata"
+                    style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", display: "block" }}
+                    onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play()}
+                    onMouseLeave={e => { const el = e.currentTarget as HTMLVideoElement; el.pause(); el.currentTime = 0; }}
+                  />
+                  <div style={{ padding: "8px 10px", fontSize: 11, lineHeight: 1.5 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {v.prompt.slice(0, 80)}{v.prompt.length > 80 ? "..." : ""}
+                    </div>
+                    <div className="muted">
+                      {v.generation.provider} / {v.generation.model}
+                      {" · "}{v.generation.aspectRatio} · {v.generation.duration || v.generation.length}
+                      {v.generation.duration ? "s" : " frames"}
+                    </div>
+                    <div className="muted">
+                      First: {firstLabel} · Last: {lastLabel}
+                      {projName && <> · <em>{projName}</em></>}
+                    </div>
+                    <div className="muted" style={{ fontSize: 10 }}>{timeStr}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
