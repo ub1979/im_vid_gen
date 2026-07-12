@@ -1,7 +1,30 @@
-import type { Scene } from "./providers/types";
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// Types : shared TypeScript interfaces and type definitions for the
+//         entire image_creator application.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
 
+// =============================================================================
+// Importing the libraries
+import type { Scene } from "./providers/types";
+// =============================================================================
+
+// =============================================================================
+// Scene status type
+// =============================================================================
 export type SceneStatus = "pending" | "generating" | "done" | "failed";
 
+// =============================================================================
+/*
+    CharacterRef : a character reference used within a project
+*/
+// =============================================================================
 export interface CharacterRef {
   id: string;
   label: string;
@@ -10,6 +33,11 @@ export interface CharacterRef {
   imagePath?: string;
 }
 
+// =============================================================================
+/*
+    SceneEntry : a single scene in a project timeline, extends Scene from providers
+*/
+// =============================================================================
 export interface SceneEntry extends Scene {
   status: SceneStatus;
   imagePath?: string | null;
@@ -18,11 +46,21 @@ export interface SceneEntry extends Scene {
   generation?: GenerationMeta;
 }
 
+// =============================================================================
+/*
+    ProviderConfig : image and text provider selection for a project
+*/
+// =============================================================================
 export interface ProviderConfig {
   image: { id: string; model: string };
   text: { id: string; model: string };
 }
 
+// =============================================================================
+/*
+    GenerationMeta : metadata about how an image was generated
+*/
+// =============================================================================
 export interface GenerationMeta {
   imageProvider?: string;
   imageModel?: string;
@@ -31,6 +69,11 @@ export interface GenerationMeta {
   generatedAt?: string;
 }
 
+// =============================================================================
+/*
+    LibraryCharacter : a character stored in the global library
+*/
+// =============================================================================
 export interface LibraryCharacter {
   id: string;
   label: string;
@@ -40,6 +83,11 @@ export interface LibraryCharacter {
   generation?: GenerationMeta;
 }
 
+// =============================================================================
+/*
+    ProjectManifest : the complete manifest for a scene generation project
+*/
+// =============================================================================
 export interface ProjectManifest {
   id: string;
   name: string;
@@ -54,10 +102,16 @@ export interface ProjectManifest {
   scenes: SceneEntry[];
 }
 
-// ---- Reimagine / Style Transfer ----
-
+// =============================================================================
+// Reimagine / Style Transfer types
+// =============================================================================
 export type StyleMode = "preset" | "reference";
 
+// =============================================================================
+/*
+    ReimagineCharacter : a character used in a reimagine/style-transfer project
+*/
+// =============================================================================
 export interface ReimagineCharacter {
   id: string;
   label: string;
@@ -66,8 +120,16 @@ export interface ReimagineCharacter {
   referenceImagePath?: string;
 }
 
+// =============================================================================
+// Reimagine status type
+// =============================================================================
 export type ReimagineStatus = "pending" | "generating" | "done" | "failed";
 
+// =============================================================================
+/*
+    ReimagineEntry : a single entry in a reimagine project
+*/
+// =============================================================================
 export interface ReimagineEntry {
   index: number;
   sourceImageId: string;
@@ -79,6 +141,11 @@ export interface ReimagineEntry {
   error?: string;
 }
 
+// =============================================================================
+/*
+    ReimagineManifest : the complete manifest for a reimagine project
+*/
+// =============================================================================
 export interface ReimagineManifest {
   id: string;
   name: string;
@@ -92,3 +159,6 @@ export interface ReimagineManifest {
   entries: ReimagineEntry[];
   provider: ProviderConfig;
 }
+
+// =============================================================================
+// =============================================================================

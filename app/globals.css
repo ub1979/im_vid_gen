@@ -3,11 +3,9 @@
 * { box-sizing: border-box; padding: 0; margin: 0; }
 
 body {
-  background: var(--bg);
+  background: var(--ground);
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.5;
   min-height: 100vh;
 }
 
-a { color: var(--accent-2); text-decoration: none; }
+a { color: var(--cyan); text-decoration: none; }

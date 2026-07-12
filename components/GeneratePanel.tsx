@@ -1,12 +1,30 @@
 "use client";
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// GeneratePanel : provider selection, scene generation, and export controls
+//
+// done by : main git
+//
+// '''
+// =============================================================================
 
+// =============================================================================
+// Importing the libraries
 import type { ProviderConfig } from "@/lib/types";
 import {
   IMAGE_PROVIDERS,
   TEXT_PROVIDERS,
   getImageProvider,
 } from "@/lib/providers/registry";
+// =============================================================================
 
+// =============================================================================
+/*
+    GeneratePanelProps : props for the generate panel component
+*/
+// =============================================================================
 interface GeneratePanelProps {
   provider: ProviderConfig;
   onProviderChange: (provider: ProviderConfig) => void;
@@ -19,6 +37,9 @@ interface GeneratePanelProps {
   doneCount: number;
 }
 
+// =============================================================================
+// Function renders generation controls panel -> props to JSX
+// =============================================================================
 export default function GeneratePanel({
   provider,
   onProviderChange,
@@ -30,19 +51,38 @@ export default function GeneratePanel({
   sceneCount,
   doneCount,
 }: GeneratePanelProps) {
+  /*
+      GeneratePanel : provider selection and generation trigger panel
+      provider variable : current provider configuration
+      onProviderChange variable : callback when provider changes
+      onGenerateScenes variable : callback to generate scenes
+      onGenerateAll variable : callback to generate all keyframes
+      onExport variable : callback to export images
+      generatingScenes variable : whether scenes are being generated
+      generatingImages variable : whether images are being generated
+      sceneCount variable : total number of scenes
+      doneCount variable : number of completed scenes
+  */
   const selectedImageProvider = getImageProvider(provider.image.id);
   const capabilities = selectedImageProvider?.capabilities;
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <>
       <h2>Generate</h2>
 
+      {/* ==================================
+          Image provider selector
+          ================================== */}
       <div className="field">
         <label>Image provider</label>
         <select
           value={provider.image.id}
           onChange={(e) => {
             const p = IMAGE_PROVIDERS.find((ip) => ip.id === e.target.value);
+            // ==================================
             if (p) {
               onProviderChange({
                 ...provider,
@@ -59,12 +99,16 @@ export default function GeneratePanel({
         </select>
       </div>
 
+      {/* ==================================
+          Text LLM selector
+          ================================== */}
       <div className="field">
         <label>Text LLM (scenes)</label>
         <select
           value={provider.text.id}
           onChange={(e) => {
             const p = TEXT_PROVIDERS.find((tp) => tp.id === e.target.value);
+            // ==================================
             if (p) {
               onProviderChange({
                 ...provider,
@@ -81,6 +125,9 @@ export default function GeneratePanel({
         </select>
       </div>
 
+      {/* =====================================
+          Action buttons
+          ===================================== */}
       <button
         className="btn btn-primary"
         style={{ width: "100%" }}
@@ -99,6 +146,9 @@ export default function GeneratePanel({
         {generatingImages ? "Generating keyframes..." : "Generate all keyframes"}
       </button>
 
+      {/* ==================================
+          Provider capability notes
+          ================================== */}
       {capabilities?.supports_reference_edit && (
         <div className="note" style={{ marginTop: "14px" }}>
           Provider supports reference-image editing. Character reference images
@@ -113,6 +163,9 @@ export default function GeneratePanel({
         </div>
       )}
 
+      {/* ==================================
+          Progress bar
+          ================================== */}
       {sceneCount > 0 && (
         <div style={{ marginTop: "12px" }}>
           <div className="muted" style={{ fontSize: "11px", marginBottom: "4px" }}>
@@ -128,6 +181,9 @@ export default function GeneratePanel({
         </div>
       )}
 
+      {/* =====================================
+          Export section
+          ===================================== */}
       <h2 style={{ marginTop: "18px" }}>Export</h2>
       <button
         className="btn btn-sm"
@@ -161,3 +217,6 @@ export default function GeneratePanel({
     </>
   );
 }
+
+// =============================================================================
+// =============================================================================

@@ -1,8 +1,26 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// Reimagine : style-transfer pipeline — preset definitions, source
+//             image analysis via vision LLM, prompt construction for
+//             composition-preserving style application, and single-image
+//             reimagine generation.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import type { TextLLM, ImageProvider, ImageGenResult } from "./providers/types";
 import type { ReimagineEntry, ReimagineCharacter } from "./types";
+// =============================================================================
 
-// ---- Style presets ----
-
+// =============================================================================
+// Style preset definitions
+// =============================================================================
 export const STYLE_PRESETS: Record<string, { label: string; description: string }> = {
   "3d-pixar": {
     label: "3D Pixar",
@@ -46,13 +64,23 @@ export const STYLE_PRESETS: Record<string, { label: string; description: string 
   },
 };
 
-// ---- Analyze source images ----
+// =============================================================================
+// Analysis types
+// =============================================================================
 
+// =============================================================================
+/*
+    AnalysisResult : structured output from the vision LLM analysis
+*/
+// =============================================================================
 interface AnalysisResult {
   entries: { index: number; description: string; characters_detected: string[] }[];
   characters: { label: string; description: string; appears_in: number[]; best_source_index: number }[];
 }
 
+// =============================================================================
+// Analysis system prompt constant
+// =============================================================================
 const ANALYSIS_SYSTEM_PROMPT = `You are an image analysis expert. You will receive a batch of source images (they may be hand-drawn, sketched, digitally created, or photographs).
 
 For each image (numbered starting from 0), write a VERY detailed scene description that MUST include:
@@ -77,6 +105,9 @@ Return ONLY valid JSON with this exact structure:
 
 If no recurring characters are found, return an empty characters array. The best_source_index should be the image index where the character is most clearly visible.`;
 
+// =============================================================================
+// Function analyzes source images via vision LLM -> images, textLLM, creds to AnalysisResult
+// =============================================================================
 export async function analyzeSourceImages(
   images: { data: Buffer; mimeType: string }[],
   textLLM: TextLLM,
@@ -84,6 +115,16 @@ export async function analyzeSourceImages(
   model: string,
   baseUrl?: string,
 ): Promise<AnalysisResult> {
+  /*
+      analyzeSourceImages : sends images to the vision LLM in batches and
+                            aggregates character detections across batches
+      images variable : array of image buffers with mime types
+      textLLM variable : the text LLM provider with image analysis support
+      apiKey variable : API key for the LLM provider
+      model variable : the model ID to use
+      baseUrl variable : optional base URL override
+  */
+  // ==================================
   if (!textLLM.generateTextWithImages) {
     throw new Error("Text LLM does not support image analysis");
   }
@@ -92,10 +133,15 @@ export async function analyzeSourceImages(
   const allEntries: AnalysisResult["entries"] = [];
   const charMap = new Map<string, AnalysisResult["characters"][0]>();
 
+  // =====================================
+  // Process images in batches of 8
+  // =====================================
   for (let batchStart = 0; batchStart < images.length; batchStart += BATCH_SIZE) {
+    // ==================================
     const batch = images.slice(batchStart, batchStart + BATCH_SIZE);
     const globalOffset = batchStart;
 
+    // ==================================
     const userPrompt =
       batch.length === images.length
         ? `Analyze these ${batch.length} images (indexed 0 to ${batch.length - 1}).`
@@ -110,35 +156,45 @@ export async function analyzeSourceImages(
       model,
     });
 
+    // =====================================
+    // Clean LLM output — strip code fences, trailing commas, comments
+    // =====================================
     let cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    // Strip trailing commas before } or ] (common LLM JSON mistake)
     cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
-    // Strip single-line comments
     cleaned = cleaned.replace(/\/\/[^\n]*/g, "");
-    // Strip multi-line comments
     cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, "");
 
     let parsed: AnalysisResult;
     try {
       parsed = JSON.parse(cleaned) as AnalysisResult;
     } catch {
-      // Try to extract JSON object from the response
+      // ==================================
       const match = cleaned.match(/\{[\s\S]*\}/);
+      // ==================================
       if (!match) throw new Error("Analysis did not return valid JSON. Try again or use fewer images.");
       const extracted = match[0].replace(/,\s*([}\]])/g, "$1");
       parsed = JSON.parse(extracted) as AnalysisResult;
     }
 
+    // =====================================
+    // Adjust batch-local indices to global indices
+    // =====================================
     for (const entry of parsed.entries) {
+      // ==================================
       if (entry.index < batch.length) {
         entry.index += globalOffset;
       }
       allEntries.push(entry);
     }
 
+    // =====================================
+    // Merge characters across batches by lowercase label
+    // =====================================
     for (const char of parsed.characters) {
+      // ==================================
       const key = char.label.toLowerCase();
       const existing = charMap.get(key);
+      // ==================================
       if (existing) {
         existing.appears_in = [...new Set([...existing.appears_in, ...char.appears_in])];
       } else {
@@ -150,16 +206,27 @@ export async function analyzeSourceImages(
   return { entries: allEntries, characters: Array.from(charMap.values()) };
 }
 
-// ---- Build reimagine prompt ----
-
+// =============================================================================
+// Function builds a reimagine prompt -> description, style, chars to string
+// =============================================================================
 export function buildReimaginePrompt(
   sceneDescription: string,
   styleDescription: string,
   characters: { label: string; description: string; hasRef: boolean }[],
 ): string {
+  /*
+      buildReimaginePrompt : constructs the prompt for reimagine generation
+      sceneDescription variable : the analyzed scene description
+      styleDescription variable : the target style description
+      characters variable : characters with ref image flags
+  */
   let prompt = `Reimagine the following scene in this style: ${styleDescription}\n\nOriginal scene: ${sceneDescription}`;
 
+  // =====================================
+  // Characters with reference images
+  // =====================================
   const withRefs = characters.filter((c) => c.hasRef);
+  // ==================================
   if (withRefs.length > 0) {
     const charList = withRefs
       .map((c, i) => `Reference image ${i + 1} is "${c.label}" (${c.description}). Keep their exact visual design, proportions, and distinguishing features.`)
@@ -167,7 +234,11 @@ export function buildReimaginePrompt(
     prompt += `\n\nUsing the attached character reference images, maintain each character's exact visual identity:\n${charList}`;
   }
 
+  // =====================================
+  // Characters without reference images
+  // =====================================
   const withoutRefs = characters.filter((c) => !c.hasRef);
+  // ==================================
   if (withoutRefs.length > 0) {
     const descs = withoutRefs.map((c) => `[${c.label}: ${c.description}]`).join(" ");
     prompt += `\n\nAdditional characters (described, no reference image): ${descs}`;
@@ -178,8 +249,9 @@ export function buildReimaginePrompt(
   return prompt;
 }
 
-// ---- Generate a single reimagined image ----
-
+// =============================================================================
+// Function generates a single reimagined image -> provider, entry, images, style to ImageGenResult
+// =============================================================================
 export async function generateReimagined(
   provider: ImageProvider,
   entry: ReimagineEntry,
@@ -191,18 +263,35 @@ export async function generateReimagined(
   model: string,
   baseUrl?: string,
 ): Promise<ImageGenResult> {
+  /*
+      generateReimagined : generates a style-transferred image preserving composition
+      provider variable : the image generation provider
+      entry variable : the reimagine entry with prompts
+      sourceImage variable : the original source image buffer
+      characters variable : character refs with their images
+      styleRefImage variable : optional style reference image
+      styleDescription variable : target style description text
+      apiKey variable : API key for the provider
+      model variable : model ID to use
+      baseUrl variable : optional base URL override
+  */
   const caps = provider.capabilities;
   const maxRefs = caps.max_reference_images;
 
-  // Budget: 1 for source image + 1 for style ref (if present) + rest for characters
+  // =====================================
+  // Budget reference image slots: 1 source + 1 style ref (if present) + rest for characters
+  // =====================================
   const styleSlots = styleRefImage ? 1 : 0;
   const charSlots = Math.max(0, maxRefs - 1 - styleSlots);
 
   const charsWithImages = characters.slice(0, charSlots);
   const excessChars = characters.slice(charSlots);
 
+  // =====================================
   // Build reference images array: source first, then style ref, then character refs
+  // =====================================
   const referenceImages: Buffer[] = [sourceImage];
+  // ==================================
   if (styleRefImage) {
     referenceImages.push(styleRefImage);
   }
@@ -210,7 +299,9 @@ export async function generateReimagined(
     referenceImages.push(c.image);
   }
 
-  // Build prompt
+  // =====================================
+  // Build character info for prompt construction
+  // =====================================
   const charInfo = characters.map((c) => ({
     label: c.char.label,
     description: c.char.description,
@@ -219,6 +310,9 @@ export async function generateReimagined(
 
   const sceneDesc = entry.reimaginedPrompt || entry.prompt;
 
+  // =====================================
+  // Build the composition-preserving prompt with strict rules
+  // =====================================
   let prompt = `You are recreating a specific scene in a new art style. Follow these rules STRICTLY:
 
 RULE 1 — EXACT COMPOSITION: You MUST preserve the EXACT camera angle, perspective, framing, and subject positioning from the source image (Image 1). If the source shows a top-down view, your output MUST be top-down. If it shows a close-up of feet, show feet. If the subject faces left, it faces left. Do NOT change the camera angle.
@@ -229,11 +323,14 @@ RULE 3 — STYLE ONLY: Apply the target style's RENDERING TECHNIQUE (line qualit
 
 TARGET STYLE: ${styleDescription}\n\n`;
 
+  // ==================================
   if (styleRefImage) {
     prompt += `Style reference (Image 2): Copy ONLY the artistic style from this image — its rendering technique, color palette, lighting approach, line quality, and shading method. Do NOT copy any subjects, characters, objects, or composition from this image. It is a STYLE guide only.\n\n`;
   }
 
+  // ==================================
   const charRefOffset = 1 + styleSlots;
+  // ==================================
   if (charsWithImages.length > 0) {
     const charDescs = charsWithImages
       .map((c, i) => `Image ${charRefOffset + i + 1} is "${c.char.label}" (${c.char.description}). Use for visual identity reference only — pose and angle come from the SOURCE image.`)
@@ -241,6 +338,7 @@ TARGET STYLE: ${styleDescription}\n\n`;
     prompt += `Character identity references:\n${charDescs}\n\n`;
   }
 
+  // ==================================
   if (excessChars.length > 0) {
     const descs = excessChars.map((c) => `[${c.char.label}: ${c.char.description}]`).join(" ");
     prompt += `Additional characters (no reference image): ${descs}\n\n`;
@@ -248,7 +346,9 @@ TARGET STYLE: ${styleDescription}\n\n`;
 
   prompt += `SCENE TO RECREATE (from source Image 1): ${sceneDesc}\n\nRe-draw this EXACT scene preserving camera angle, subject type, pose, framing, and composition. Only change the rendering style.`;
 
-  // Build charactersUsed for the provider
+  // =====================================
+  // Build charactersUsed metadata for the provider
+  // =====================================
   const charactersUsed = [
     { id: "source", label: "Source Image", description: "Original image to reimagine" },
     ...(styleRefImage ? [{ id: "style-ref", label: "Style Reference" }] : []),
@@ -264,3 +364,6 @@ TARGET STYLE: ${styleDescription}\n\n`;
     baseUrl,
   });
 }
+
+// =============================================================================
+// =============================================================================

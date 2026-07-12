@@ -1,5 +1,20 @@
 "use client";
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// TextPanel : text/lyrics input with duration and interval controls
+//
+// done by : main git
+//
+// '''
+// =============================================================================
 
+// =============================================================================
+/*
+    TextPanelProps : props for the text panel component
+*/
+// =============================================================================
 interface TextPanelProps {
   text: string;
   duration: number;
@@ -11,6 +26,9 @@ interface TextPanelProps {
   generating?: boolean;
 }
 
+// =============================================================================
+// Function renders text input panel with timing controls -> props to JSX
+// =============================================================================
 export default function TextPanel({
   text,
   duration,
@@ -21,12 +39,29 @@ export default function TextPanel({
   onGenerateScenes,
   generating = false,
 }: TextPanelProps) {
+  /*
+      TextPanel : text/lyrics input with scene generation controls
+      text variable : current text content
+      duration variable : total duration in seconds
+      interval variable : keyframe interval in seconds
+      onTextChange variable : callback when text changes
+      onDurationChange variable : callback when duration changes
+      onIntervalChange variable : callback when interval changes
+      onGenerateScenes variable : callback to trigger scene generation
+      generating variable : whether scenes are being generated
+  */
   const keyframeCount = interval > 0 ? Math.ceil(duration / interval) : 0;
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <>
       <h2 style={{ marginTop: "18px" }}>Text / Lyrics</h2>
 
+      {/* ==================================
+          Text input area
+          ================================== */}
       <div className="field">
         <label>Paste lyrics / story / poem</label>
         <textarea
@@ -37,6 +72,9 @@ export default function TextPanel({
         />
       </div>
 
+      {/* ==================================
+          Duration input
+          ================================== */}
       <div className="field">
         <label>Total duration (seconds)</label>
         <input
@@ -47,6 +85,9 @@ export default function TextPanel({
         />
       </div>
 
+      {/* ==================================
+          Interval input
+          ================================== */}
       <div className="field">
         <label>Keyframe every (seconds)</label>
         <input
@@ -60,6 +101,9 @@ export default function TextPanel({
         </div>
       </div>
 
+      {/* ==================================
+          Generate button
+          ================================== */}
       <button
         className="btn btn-primary"
         style={{ width: "100%", marginTop: "8px" }}
@@ -71,3 +115,6 @@ export default function TextPanel({
     </>
   );
 }
+
+// =============================================================================
+// =============================================================================

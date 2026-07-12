@@ -1,26 +1,27 @@
 "use client";
 
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// GenerateCharacterPage : create characters via text-to-image or extract
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import { useState, useEffect, useRef } from "react";
+import { loadSettings, getApiKey, type SettingsState } from "@/lib/settings";
+// =============================================================================
 
-const STORAGE_KEY = "image_creator_settings";
-
-const DEFAULTS: Record<string, string> = {
-  defaultImageProvider: "comfyui",
-  defaultImageModel: "flux2_dev_fp8mixed.safetensors",
-  defaultTextProvider: "ollama",
-  defaultTextModel: "glm-5.2:cloud",
-  ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://localhost:8188",
-};
-
-function loadSettings() {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-  } catch { return DEFAULTS; }
-}
-
+// =============================================================================
+/*
+    DetectedChar : shape for a character detected during image extraction
+*/
+// =============================================================================
 interface DetectedChar {
   label: string;
   description: string;
@@ -31,7 +32,17 @@ interface DetectedChar {
   generatedMime?: string;
 }
 
+// =============================================================================
+// Function renders the generate character page -> void to JSX
+// =============================================================================
 export default function GenerateCharacterPage() {
+  /*
+      GenerateCharacterPage : two-mode page for creating characters
+  */
+
+  // =====================================
+  // State — generate mode
+  // =====================================
   const [mode, setMode] = useState<"generate" | "upload">("generate");
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
@@ -44,9 +55,11 @@ export default function GenerateCharacterPage() {
     generation?: { imageProvider: string; imageModel: string; textProvider: string; textModel: string };
   } | null>(null);
   const [saved, setSaved] = useState(false);
-  const [settings, setSettings] = useState<Record<string, string> | null>(null);
+  const [settings, setSettings] = useState<SettingsState | null>(null);
 
-  // Upload mode state
+  // =====================================
+  // State — upload/extract mode
+  // =====================================
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -55,28 +68,28 @@ export default function GenerateCharacterPage() {
   const [sourceMime, setSourceMime] = useState<string>("image/png");
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // =====================================
+  // Load settings from localStorage on mount
+  // =====================================
   useEffect(() => { setSettings(loadSettings()); }, []);
 
-  const s = settings || {} as Record<string, string>;
+  // =====================================
+  // Derived provider settings
+  // =====================================
+  const s = settings || loadSettings();
   const textProviderId = s.defaultTextProvider || "ollama";
   const textModel = s.defaultTextModel || "glm-5.2:cloud";
   const imageProviderId = s.defaultImageProvider || "comfyui";
-  const imageModel = s.defaultImageModel || "qwen_image_fp8_e4m3fn.safetensors";
+  const imageModel = s.defaultImageModel || "flux2_dev_fp8mixed.safetensors";
 
-  function apiKey(providerId: string): string {
-    const keyMap: Record<string, string> = {
-      gemini: s.geminiKey || "",
-      openai: s.openaiKey || "",
-      claude: s.claudeKey || "",
-      qwen: s.qwenKey || "",
-      piapi: s.piapiKey || "",
-    };
-    return keyMap[providerId] || "";
-  }
-
-  // ---- Generate mode ----
-
+  // =============================================================================
+  // Function generates a character from text description -> void to void
+  // =============================================================================
   async function handleGenerate() {
+    /*
+        handleGenerate : sends label + description to /api/generate-character
+    */
+    // ==================================
     if (!label.trim() || !description.trim()) {
       setError("Enter a name and description");
       return;
@@ -86,10 +99,16 @@ export default function GenerateCharacterPage() {
     setResult(null);
     setSaved(false);
 
+    // =====================================
+    // Build headers with provider auth
+    // =====================================
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const key = apiKey(imageProviderId);
+    const key = getApiKey(s, imageProviderId);
+    // ==================================
     if (key) headers["x-provider-key"] = key;
+    // ==================================
     if (imageProviderId === "comfyui" && s.comfyuiUrl) headers["x-base-url"] = s.comfyuiUrl;
+    // ==================================
     if (imageProviderId === "ollama" && s.ollamaUrl) headers["x-base-url"] = s.ollamaUrl;
 
     try {
@@ -104,6 +123,7 @@ export default function GenerateCharacterPage() {
         }),
       });
 
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server returned ${res.status}`);
@@ -119,29 +139,46 @@ export default function GenerateCharacterPage() {
     }
   }
 
-  // ---- Upload mode ----
-
+  // =============================================================================
+  // Function sets up the upload preview from a selected file -> File to void
+  // =============================================================================
   function handleFileSelect(file: File) {
+    /*
+        handleFileSelect : creates preview URL and resets detect state
+        file variable : the image file selected for extraction
+    */
     setUploadFile(file);
     setUploadPreview(URL.createObjectURL(file));
     setDetectedChars([]);
     setError(null);
   }
 
+  // =============================================================================
+  // Function analyzes the uploaded image for characters -> void to void
+  // =============================================================================
   async function handleAnalyze() {
+    /*
+        handleAnalyze : sends image to /api/analyze-characters
+    */
+    // ==================================
     if (!uploadFile) return;
     setAnalyzing(true);
     setError(null);
     setDetectedChars([]);
 
+    // =====================================
+    // Build request
+    // =====================================
     const fd = new FormData();
     fd.append("file", uploadFile);
     fd.append("textProviderId", textProviderId);
     fd.append("textModel", textModel);
 
     const headers: Record<string, string> = {};
-    const key = apiKey(textProviderId);
+    const key = getApiKey(s, textProviderId);
+    // ==================================
     if (key) headers["x-provider-key"] = key;
+    // ==================================
     if (textProviderId === "ollama" && s.ollamaUrl) headers["x-base-url"] = s.ollamaUrl;
 
     try {
@@ -151,6 +188,7 @@ export default function GenerateCharacterPage() {
         body: fd,
       });
 
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Analysis failed");
@@ -174,21 +212,37 @@ export default function GenerateCharacterPage() {
     }
   }
 
+  // =============================================================================
+  // Function toggles selection of a detected character -> number to void
+  // =============================================================================
   function toggleChar(index: number) {
+    /*
+        toggleChar : flips the selected state of a detected character
+        index variable : index of the character in detectedChars array
+    */
     setDetectedChars((prev) =>
       prev.map((c, i) => (i === index ? { ...c, selected: !c.selected } : c)),
     );
   }
 
+  // =============================================================================
+  // Function generates and saves selected detected characters -> void to void
+  // =============================================================================
   async function handleSaveSelected() {
+    /*
+        handleSaveSelected : generates individual portraits for each selected character
+    */
+    // ==================================
     if (!sourceImageBase64) return;
     const selected = detectedChars.filter((c) => c.selected && !c.saved);
+    // ==================================
     if (selected.length === 0) return;
 
     setError(null);
 
     for (let i = 0; i < detectedChars.length; i++) {
       const char = detectedChars[i];
+      // ==================================
       if (!char.selected || char.saved) continue;
 
       setDetectedChars((prev) =>
@@ -196,11 +250,16 @@ export default function GenerateCharacterPage() {
       );
 
       try {
-        // Generate individual portrait using the uploaded image as reference
-        const key = apiKey(imageProviderId);
+        // =====================================
+        // Build headers with provider auth
+        // =====================================
+        const key = getApiKey(s, imageProviderId);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
+        // ==================================
         if (key) headers["x-provider-key"] = key;
+        // ==================================
         if (imageProviderId === "comfyui" && s.comfyuiUrl) headers["x-base-url"] = s.comfyuiUrl;
+        // ==================================
         if (imageProviderId === "ollama" && s.ollamaUrl) headers["x-base-url"] = s.ollamaUrl;
 
         const res = await fetch("/api/generate-character", {
@@ -216,6 +275,7 @@ export default function GenerateCharacterPage() {
           }),
         });
 
+        // ==================================
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "Generation failed");
@@ -238,6 +298,9 @@ export default function GenerateCharacterPage() {
     }
   }
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <div className="page">
       <h1>Generate Character</h1>
@@ -245,6 +308,7 @@ export default function GenerateCharacterPage() {
         Create characters from text or extract them from an uploaded image.
       </p>
 
+      {/* ── Mode toggle ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button
           className={`btn ${mode === "generate" ? "btn-primary" : ""}`}
@@ -260,6 +324,8 @@ export default function GenerateCharacterPage() {
         </button>
       </div>
 
+      {/* ── Error banner ── */}
+      {/* ================================== */}
       {error && (
         <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 16 }}>
           {error}
@@ -267,7 +333,8 @@ export default function GenerateCharacterPage() {
         </div>
       )}
 
-      {/* ---- Generate Mode ---- */}
+      {/* ── Generate Mode ── */}
+      {/* ================================== */}
       {mode === "generate" && (
         <div className="gen-layout">
           <div className="panel">
@@ -301,12 +368,14 @@ export default function GenerateCharacterPage() {
 
           <div className="panel">
             <h2>Result</h2>
+            {/* ================================== */}
             {generating && (
               <div className="page-center" style={{ padding: "60px 0" }}>
                 <div className="spinner" />
                 <p className="muted" style={{ marginTop: 12 }}>Generating character image...</p>
               </div>
             )}
+            {/* ================================== */}
             {result && (
               <div>
                 <img
@@ -314,7 +383,9 @@ export default function GenerateCharacterPage() {
                   alt={label}
                   style={{ width: "100%", borderRadius: 10, marginBottom: 12 }}
                 />
+                {/* ================================== */}
                 {saved && <p style={{ color: "var(--ok)", fontSize: 13 }}>Saved to library</p>}
+                {/* ================================== */}
                 {result.generation && (
                   <div className="note" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 8 }}>
                     <strong>Generated with:</strong><br />
@@ -324,10 +395,11 @@ export default function GenerateCharacterPage() {
                 )}
                 <details style={{ marginTop: 8 }}>
                   <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Enhanced prompt</summary>
-                  <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-dim)" }}>{result.enhancedPrompt}</p>
+                  <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-2)" }}>{result.enhancedPrompt}</p>
                 </details>
               </div>
             )}
+            {/* ================================== */}
             {!generating && !result && (
               <div className="page-center" style={{ padding: "60px 0" }}>
                 <p className="muted">Generated character will appear here</p>
@@ -337,7 +409,8 @@ export default function GenerateCharacterPage() {
         </div>
       )}
 
-      {/* ---- Upload Mode ---- */}
+      {/* ── Upload Mode ── */}
+      {/* ================================== */}
       {mode === "upload" && (
         <div>
           <div className="panel" style={{ marginBottom: 16 }}>
@@ -346,6 +419,7 @@ export default function GenerateCharacterPage() {
               Upload an image with one or more characters. AI will identify each character and generate individual portraits for your library.
             </p>
 
+            {/* ================================== */}
             {!uploadPreview ? (
               <div
                 className="drop"
@@ -399,6 +473,7 @@ export default function GenerateCharacterPage() {
             />
           </div>
 
+          {/* ================================== */}
           {analyzing && (
             <div className="panel" style={{ textAlign: "center", padding: 40 }}>
               <div className="spinner" style={{ margin: "0 auto 12px" }} />
@@ -406,6 +481,7 @@ export default function GenerateCharacterPage() {
             </div>
           )}
 
+          {/* ================================== */}
           {detectedChars.length > 0 && (
             <div className="panel">
               <h2>Detected Characters ({detectedChars.length})</h2>
@@ -421,6 +497,7 @@ export default function GenerateCharacterPage() {
                     onClick={() => !char.saving && !char.saved && toggleChar(i)}
                     style={{ opacity: char.saving ? 0.6 : 1 }}
                   >
+                    {/* ================================== */}
                     {char.generatedImage ? (
                       <img
                         src={`data:${char.generatedMime};base64,${char.generatedImage}`}
@@ -429,6 +506,7 @@ export default function GenerateCharacterPage() {
                       />
                     ) : (
                       <div className="char-card-img char-card-placeholder" style={{ fontSize: 28 }}>
+                        {/* ================================== */}
                         {char.saving ? (
                           <div className="spinner-sm" />
                         ) : char.selected ? (
@@ -445,6 +523,7 @@ export default function GenerateCharacterPage() {
                           ? char.description.slice(0, 80) + "..."
                           : char.description}
                       </span>
+                      {/* ================================== */}
                       {char.saved && (
                         <span style={{ color: "var(--ok)", fontSize: 11 }}>Saved to library</span>
                       )}
@@ -487,3 +566,6 @@ export default function GenerateCharacterPage() {
     </div>
   );
 }
+
+// =============================================================================
+// =============================================================================

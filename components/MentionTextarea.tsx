@@ -1,8 +1,26 @@
 "use client";
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// MentionTextarea : textarea with @mention autocomplete for character library
+//
+// done by : main git
+//
+// '''
+// =============================================================================
 
+// =============================================================================
+// Importing the libraries
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { LibraryCharacter } from "@/lib/types";
+// =============================================================================
 
+// =============================================================================
+/*
+    MentionTextareaProps : props for the mention textarea component
+*/
+// =============================================================================
 interface MentionTextareaProps {
   value: string;
   onChange: (value: string) => void;
@@ -13,6 +31,9 @@ interface MentionTextareaProps {
   className?: string;
 }
 
+// =============================================================================
+// Function renders textarea with @mention autocomplete -> props to JSX
+// =============================================================================
 export default function MentionTextarea({
   value,
   onChange,
@@ -22,6 +43,19 @@ export default function MentionTextarea({
   style,
   className,
 }: MentionTextareaProps) {
+  /*
+      MentionTextarea : textarea with character @mention autocomplete
+      value variable : current textarea value
+      onChange variable : callback when text changes
+      characters variable : library characters for mention suggestions
+      onMention variable : callback when a character is mentioned
+      placeholder variable : placeholder text
+      style variable : inline styles
+      className variable : CSS class name
+  */
+  // =====================================
+  // State & refs
+  // =====================================
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -30,13 +64,24 @@ export default function MentionTextarea({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const mentionStartRef = useRef<number | null>(null);
 
+  // =====================================
+  // Filtered character list
+  // =====================================
   const filtered = characters.filter((c) =>
     c.label.toLowerCase().includes(filter.toLowerCase()),
   );
 
+  // =============================================================================
+  // Function inserts a character mention into the textarea -> LibraryCharacter to void
+  // =============================================================================
   const insertMention = useCallback(
     (char: LibraryCharacter) => {
+      /*
+          insertMention : replaces the @query with the full character mention
+          char variable : character to insert
+      */
       const ta = textareaRef.current;
+      // ==================================
       if (!ta || mentionStartRef.current === null) return;
 
       const before = value.slice(0, mentionStartRef.current);
@@ -59,15 +104,25 @@ export default function MentionTextarea({
     [value, onChange, onMention],
   );
 
+  // =============================================================================
+  // Function handles textarea input and detects @mentions -> ChangeEvent to void
+  // =============================================================================
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    /*
+        handleInput : processes text changes and triggers mention dropdown
+        e variable : change event from textarea
+    */
     const newVal = e.target.value;
     onChange(newVal);
 
     const cursorPos = e.target.selectionStart;
     const textBefore = newVal.slice(0, cursorPos);
 
+    // =====================================
     // Find the last @ that isn't preceded by a word char
+    // =====================================
     const atMatch = textBefore.match(/(^|[\s\n])@([^\s]*)$/);
+    // ==================================
     if (atMatch) {
       mentionStartRef.current = textBefore.lastIndexOf("@");
       const query = atMatch[2];
@@ -75,15 +130,22 @@ export default function MentionTextarea({
       setSelectedIdx(0);
       setShowDropdown(true);
       updateDropdownPosition(e.target);
+    // ==================================
     } else {
       setShowDropdown(false);
       mentionStartRef.current = null;
     }
   }
 
+  // =============================================================================
+  // Function calculates dropdown position relative to textarea -> HTMLTextAreaElement to void
+  // =============================================================================
   function updateDropdownPosition(ta: HTMLTextAreaElement) {
+    /*
+        updateDropdownPosition : positions the mention dropdown near the cursor
+        ta variable : textarea element reference
+    */
     const rect = ta.getBoundingClientRect();
-    // Approximate position — place below the textarea at cursor line
     const lineHeight = 20;
     const textBefore = ta.value.slice(0, ta.selectionStart);
     const lines = textBefore.split("\n").length;
@@ -95,27 +157,42 @@ export default function MentionTextarea({
     });
   }
 
+  // =============================================================================
+  // Function handles keyboard navigation in dropdown -> KeyboardEvent to void
+  // =============================================================================
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    /*
+        handleKeyDown : handles arrow keys, enter, tab, escape for dropdown
+        e variable : keyboard event
+    */
+    // ==================================
     if (!showDropdown || filtered.length === 0) return;
 
+    // ==================================
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1));
+    // ==================================
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIdx((i) => Math.max(i - 1, 0));
+    // ==================================
     } else if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       insertMention(filtered[selectedIdx]);
+    // ==================================
     } else if (e.key === "Escape") {
       setShowDropdown(false);
       mentionStartRef.current = null;
     }
   }
 
+  // =====================================
   // Close dropdown on outside click
+  // =====================================
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      // ==================================
       if (
         dropdownRef.current &&
         !dropdownRef.current.contains(e.target as Node) &&
@@ -129,6 +206,9 @@ export default function MentionTextarea({
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <div className="mention-wrap">
       <textarea
@@ -140,6 +220,9 @@ export default function MentionTextarea({
         style={style}
         className={className}
       />
+      {/* ==================================
+          Mention dropdown
+          ================================== */}
       {showDropdown && filtered.length > 0 && (
         <div
           ref={dropdownRef}
@@ -156,6 +239,9 @@ export default function MentionTextarea({
               }}
               onMouseEnter={() => setSelectedIdx(i)}
             >
+              {/* ==================================
+                  Character thumbnail or placeholder
+                  ================================== */}
               {char.imagePath ? (
                 <img
                   src={`/api/library/${char.id}/image`}
@@ -175,9 +261,15 @@ export default function MentionTextarea({
           ))}
         </div>
       )}
+      {/* ==================================
+          Hint text
+          ================================== */}
       {!showDropdown && characters.length > 0 && (
         <div className="mention-hint">Type @ to insert a character from library</div>
       )}
     </div>
   );
 }
+
+// =============================================================================
+// =============================================================================

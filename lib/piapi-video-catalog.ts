@@ -1,8 +1,29 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// PiAPIVideoCatalog : catalog of all PiAPI-supported video generation
+//                     models with their variants, modes, durations,
+//                     and capability flags.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Type definitions
+// =============================================================================
 export interface VideoVariant {
   id: string;
   label: string;
 }
 
+// =============================================================================
+/*
+    PiAPIVideoModelDef : definition for a single video generation model
+*/
+// =============================================================================
 export interface PiAPIVideoModelDef {
   providerId: string;
   apiModel: string;
@@ -17,6 +38,9 @@ export interface PiAPIVideoModelDef {
   supportsLastFrame: boolean;
 }
 
+// =============================================================================
+// Video model catalog
+// =============================================================================
 export const PIAPI_VIDEO_CATALOG: PiAPIVideoModelDef[] = [
   {
     providerId: "piapi-kling",
@@ -172,6 +196,16 @@ export const PIAPI_VIDEO_CATALOG: PiAPIVideoModelDef[] = [
   },
 ];
 
+// =============================================================================
+// Function finds a model definition by provider ID -> string to PiAPIVideoModelDef | undefined
+// =============================================================================
 export function findModelDef(providerId: string): PiAPIVideoModelDef | undefined {
+  /*
+      findModelDef : looks up a video model definition by its provider ID
+      providerId variable : the provider ID to search for (e.g. "piapi-kling")
+  */
   return PIAPI_VIDEO_CATALOG.find(m => m.providerId === providerId);
 }
+
+// =============================================================================
+// =============================================================================

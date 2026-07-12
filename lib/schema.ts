@@ -1,8 +1,24 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// Schema : Zod validation schemas for all API request bodies
+//          (projects, scenes, uploads, reimagine).
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import { z } from "zod";
 import { MAX_UPLOAD_BYTES, MAX_PROMPT_LENGTH } from "./security";
+// =============================================================================
 
-// ---- Project ----
-
+// =============================================================================
+// Project schemas
+// =============================================================================
 export const providerConfigSchema = z.object({
   image: z.object({ id: z.string(), model: z.string() }),
   text: z.object({ id: z.string(), model: z.string() }),
@@ -15,7 +31,6 @@ export const createProjectSchema = z.object({
 
 export const projectSlugSchema = z.string().regex(/^[a-z0-9-]+$/);
 
-
 export const updateProjectSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   durationSeconds: z.number().positive().optional(),
@@ -25,8 +40,9 @@ export const updateProjectSchema = z.object({
   provider: providerConfigSchema.optional(),
 });
 
-// ---- Scene ----
-
+// =============================================================================
+// Scene schemas
+// =============================================================================
 export const sceneArraySchema = z.array(
   z.object({
     index: z.number().int().min(0),
@@ -38,19 +54,22 @@ export const sceneArraySchema = z.array(
   })
 );
 
-// ---- Upload ----
-
+// =============================================================================
+// Upload schemas
+// =============================================================================
 export const uploadSchema = z.object({
   size: z.number().max(MAX_UPLOAD_BYTES),
   mime: z.enum(["image/png", "image/jpeg", "image/webp"]),
 });
 
-// ---- Prompt ----
-
+// =============================================================================
+// Prompt schema
+// =============================================================================
 export const promptSchema = z.string().max(MAX_PROMPT_LENGTH);
 
-// ---- Reimagine ----
-
+// =============================================================================
+// Reimagine schemas
+// =============================================================================
 export const reimagineCreateSchema = z.object({
   name: z.string().min(1).max(200),
   provider: providerConfigSchema.optional(),
@@ -71,3 +90,6 @@ export const reimagineEntryUpdateSchema = z.object({
   reimaginedPrompt: z.string().max(MAX_PROMPT_LENGTH).optional(),
   characters_used: z.array(z.string()).optional(),
 });
+
+// =============================================================================
+// =============================================================================

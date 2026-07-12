@@ -1,10 +1,34 @@
 "use client";
 
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// ReimaginePage : style transfer wizard
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Imports
+// =============================================================================
 import { useState, useEffect, useCallback } from "react";
 import type { ReimagineCharacter, ReimagineEntry } from "@/lib/types";
+import { loadSettings, getApiKey, type SettingsState } from "@/lib/settings";
+// =============================================================================
 
+// =============================================================================
+/*
+    Step : union type representing the wizard step names
+*/
+// =============================================================================
 type Step = "upload" | "style" | "characters" | "generate" | "results";
 
+// =====================================
+// Step definitions
+// =====================================
 const STEPS: { key: Step; label: string }[] = [
   { key: "upload", label: "Upload" },
   { key: "style", label: "Style" },
@@ -13,51 +37,35 @@ const STEPS: { key: Step; label: string }[] = [
   { key: "results", label: "Results" },
 ];
 
+// =====================================
+// Style preset options
+// =====================================
 const STYLE_PRESETS = [
-  { id: "3d-pixar", label: "3D Pixar", icon: "🎬" },
-  { id: "anime", label: "Anime", icon: "🌸" },
-  { id: "watercolor", label: "Watercolor", icon: "🎨" },
-  { id: "oil-painting", label: "Oil Painting", icon: "🖼" },
-  { id: "comic-book", label: "Comic Book", icon: "💥" },
-  { id: "photorealistic", label: "Photorealistic", icon: "📷" },
-  { id: "claymation", label: "Claymation", icon: "🧸" },
+  { id: "3d-pixar", label: "3D Pixar", icon: "\u{1F3AC}" },
+  { id: "anime", label: "Anime", icon: "\u{1F338}" },
+  { id: "watercolor", label: "Watercolor", icon: "\u{1F3A8}" },
+  { id: "oil-painting", label: "Oil Painting", icon: "\u{1F5BC}" },
+  { id: "comic-book", label: "Comic Book", icon: "\u{1F4A5}" },
+  { id: "photorealistic", label: "Photorealistic", icon: "\u{1F4F7}" },
+  { id: "claymation", label: "Claymation", icon: "\u{1F9F8}" },
   { id: "sketch", label: "Pencil Sketch", icon: "✏" },
 ];
 
-const STORAGE_KEY = "image_creator_settings";
+// =====================================
+// Prompt history constants
+// =====================================
 const PROMPT_HISTORY_KEY = "reimagine_prompt_history";
 const MAX_PROMPT_HISTORY = 10;
 
-const DEFAULTS: Record<string, string> = {
-  defaultImageProvider: "comfyui",
-  defaultImageModel: "qwen_image_fp8_e4m3fn.safetensors",
-  defaultTextProvider: "ollama",
-  defaultTextModel: "glm-5.2:cloud",
-  ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://192.168.0.24:8188",
-};
-
-function loadSettings() {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-  } catch {
-    return DEFAULTS;
-  }
-}
-
-function getApiKey(settings: Record<string, string>, providerId: string): string {
-  const keyMap: Record<string, string> = {
-    gemini: settings.geminiKey || "",
-    openai: settings.openaiKey || "",
-    claude: settings.claudeKey || "",
-    qwen: settings.qwenKey || "",
-  };
-  return keyMap[providerId] || "";
-}
-
+// =============================================================================
+// loadPromptHistory reads localStorage -> string[] of recent prompts
+// =============================================================================
 function loadPromptHistory(): string[] {
+  /*
+      loadPromptHistory : loads the prompt history from localStorage
+      returns : array of prompt strings or empty array if unavailable
+  */
+  // ==================================
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
@@ -67,43 +75,95 @@ function loadPromptHistory(): string[] {
   }
 }
 
+// =============================================================================
+// savePromptToHistory saves a prompt string -> string to void
+// =============================================================================
 function savePromptToHistory(prompt: string) {
+  /*
+      savePromptToHistory : saves a new prompt to the front of the history list
+      prompt variable : the prompt text to save
+  */
+  // ==================================
   if (!prompt.trim()) return;
   const history = loadPromptHistory().filter((p) => p !== prompt.trim());
   history.unshift(prompt.trim());
+  // ==================================
   if (history.length > MAX_PROMPT_HISTORY) history.length = MAX_PROMPT_HISTORY;
   localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(history));
 }
 
+// =============================================================================
+// ReimaginePage is the main component -> void to JSX.Element
+// =============================================================================
 export default function ReimaginePage() {
+  /*
+      ReimaginePage : style transfer wizard page component
+      renders the multi-step reimagine workflow UI
+  */
+
+  // =====================================
+  // Wizard state
+  // =====================================
   const [step, setStep] = useState<Step>("upload");
   const [slug, setSlug] = useState<string | null>(null);
   const [entries, setEntries] = useState<ReimagineEntry[]>([]);
   const [characters, setCharacters] = useState<ReimagineCharacter[]>([]);
+
+  // =====================================
+  // Style state
+  // =====================================
   const [styleMode, setStyleMode] = useState<"preset" | "reference">("preset");
   const [stylePreset, setStylePreset] = useState<string>("3d-pixar");
   const [styleRefFile, setStyleRefFile] = useState<File | null>(null);
   const [styleRefUrl, setStyleRefUrl] = useState<string | null>(null);
   const [customStyleNote, setCustomStyleNote] = useState("");
+
+  // =====================================
+  // Loading and error state
+  // =====================================
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<SettingsState>(loadSettings());
+
+  // =====================================
+  // Modal and UI state
+  // =====================================
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // =====================================
+  // Library state
+  // =====================================
   const [libraryChars, setLibraryChars] = useState<{ id: string; label: string; imagePath?: string }[]>([]);
   const [showLibPicker, setShowLibPicker] = useState(false);
+
+  // =====================================
+  // Character editing state
+  // =====================================
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [editCharLabel, setEditCharLabel] = useState("");
   const [editCharDesc, setEditCharDesc] = useState("");
   const [savingToLib, setSavingToLib] = useState<Set<string>>(new Set());
   const [savedToLib, setSavedToLib] = useState<Set<string>>(new Set());
+
+  // =====================================
+  // Prompt editing state
+  // =====================================
   const [editingPromptIdx, setEditingPromptIdx] = useState<number | null>(null);
   const [editPromptText, setEditPromptText] = useState("");
+
+  // =====================================
+  // Saved folders and history state
+  // =====================================
   const [savedFolders, setSavedFolders] = useState<string[]>([]);
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
+
+  // =====================================
+  // Project management state
+  // =====================================
   const [existingProjects, setExistingProjects] = useState<{ id: string; name: string; updatedAt: string; entries: { status: string }[]; stylePreset?: string; styleMode?: string }[]>([]);
   const [loadingProject, setLoadingProject] = useState(false);
   const [selectedForRegen, setSelectedForRegen] = useState<Set<number>>(new Set());
@@ -118,40 +178,69 @@ export default function ReimaginePage() {
     fetch("/api/reimagine").then((r) => r.ok ? r.json() : []).then(setExistingProjects).catch(() => {});
   }, []);
 
+  // =====================================
+  // Provider config derived state
+  // =====================================
   const textProviderId = settings.defaultTextProvider || "ollama";
   const textModel = settings.defaultTextModel || "glm-5.2:cloud";
   const imageProviderId = settings.defaultImageProvider || "comfyui";
   const imageModel = settings.defaultImageModel || "qwen_image_fp8_e4m3fn.safetensors";
 
+  // =============================================================================
+  // apiHeaders builds text provider headers -> void to Record<string, string>
+  // =============================================================================
   function apiHeaders(): Record<string, string> {
+    /*
+        apiHeaders : builds HTTP headers for text provider API calls
+        returns : a record of header key-value pairs
+    */
     const h: Record<string, string> = {};
     const key = getApiKey(settings, textProviderId);
+    // ==================================
     if (key) h["x-provider-key"] = key;
+    // ==================================
     if (textProviderId === "ollama" && settings.ollamaUrl) h["x-base-url"] = settings.ollamaUrl;
+    // ==================================
     if (textProviderId === "comfyui" && settings.comfyuiUrl) h["x-base-url"] = settings.comfyuiUrl;
     return h;
   }
 
+  // =============================================================================
+  // imgApiHeaders builds image provider headers -> void to Record<string, string>
+  // =============================================================================
   function imgApiHeaders(): Record<string, string> {
+    /*
+        imgApiHeaders : builds HTTP headers for image provider API calls
+        returns : a record of header key-value pairs
+    */
     const h: Record<string, string> = {};
     const key = getApiKey(settings, imageProviderId);
+    // ==================================
     if (key) h["x-provider-key"] = key;
+    // ==================================
     if (imageProviderId === "comfyui" && settings.comfyuiUrl) {
       h["x-base-url"] = settings.comfyuiUrl;
     }
+    // ==================================
     if (imageProviderId === "ollama" && settings.ollamaUrl) {
       h["x-base-url"] = settings.ollamaUrl;
     }
     return h;
   }
 
-  // ---- Load existing project ----
-
+  // =============================================================================
+  // handleLoadProject loads an existing project -> string to void
+  // =============================================================================
   async function handleLoadProject(projectId: string) {
+    /*
+        handleLoadProject : fetches and restores a saved reimagine project
+        projectId variable : the unique identifier of the project to load
+    */
     setLoadingProject(true);
     setError(null);
     try {
       const res = await fetch(`/api/reimagine/${projectId}`);
+      // ==================================
       if (!res.ok) throw new Error("Failed to load project");
       const manifest = await res.json();
       setSlug(manifest.id);
@@ -160,6 +249,7 @@ export default function ReimaginePage() {
       setStyleMode(manifest.styleMode || "preset");
       setStylePreset(manifest.stylePreset || "3d-pixar");
       setCustomStyleNote(manifest.styleDescription || "");
+      // ==================================
       if (manifest.styleRefImagePath) {
         setStyleRefUrl(`/api/reimagine/${manifest.id}/style-ref`);
       }
@@ -171,7 +261,15 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleRenameProject renames a project -> string to void
+  // =============================================================================
   async function handleRenameProject(projectId: string) {
+    /*
+        handleRenameProject : updates the display name of a project
+        projectId variable : the unique identifier of the project to rename
+    */
+    // ==================================
     if (!renameValue.trim()) return;
     try {
       const res = await fetch(`/api/reimagine/${projectId}`, {
@@ -179,6 +277,7 @@ export default function ReimaginePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: renameValue.trim() }),
       });
+      // ==================================
       if (!res.ok) throw new Error("Rename failed");
       setExistingProjects((prev) =>
         prev.map((p) => (p.id === projectId ? { ...p, name: renameValue.trim() } : p)),
@@ -189,10 +288,18 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleDeleteProject deletes a project -> string to void
+  // =============================================================================
   async function handleDeleteProject(projectId: string) {
+    /*
+        handleDeleteProject : removes a project permanently
+        projectId variable : the unique identifier of the project to delete
+    */
     setError(null);
     try {
       const res = await fetch(`/api/reimagine/${projectId}`, { method: "DELETE" });
+      // ==================================
       if (!res.ok) throw new Error("Delete failed");
       setExistingProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (err) {
@@ -200,7 +307,15 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleMergeProject merges source project into current -> string to void
+  // =============================================================================
   async function handleMergeProject(sourceId: string) {
+    /*
+        handleMergeProject : copies source images from another project into the current one
+        sourceId variable : the unique identifier of the source project to merge
+    */
+    // ==================================
     if (!slug) return;
     setMerging(true);
     setError(null);
@@ -210,6 +325,7 @@ export default function ReimaginePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceSlug: sourceId }),
       });
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Merge failed");
@@ -224,9 +340,15 @@ export default function ReimaginePage() {
     }
   }
 
-  // ---- Upload handlers ----
-
+  // =============================================================================
+  // ensureProject creates project if needed -> void to Promise<string>
+  // =============================================================================
   async function ensureProject(): Promise<string> {
+    /*
+        ensureProject : ensures a reimagine project exists, creating one if necessary
+        returns : the project slug identifier
+    */
+    // ==================================
     if (slug) return slug;
     const res = await fetch("/api/reimagine", {
       method: "POST",
@@ -239,13 +361,21 @@ export default function ReimaginePage() {
         },
       }),
     });
+    // ==================================
     if (!res.ok) throw new Error("Failed to create project");
     const manifest = await res.json();
     setSlug(manifest.id);
     return manifest.id;
   }
 
+  // =============================================================================
+  // handleFileUpload uploads source images -> FileList to void
+  // =============================================================================
   async function handleFileUpload(files: FileList | File[]) {
+    /*
+        handleFileUpload : uploads source image files to the reimagine project
+        files variable : the file list to upload
+    */
     setError(null);
     setUploading(true);
     try {
@@ -258,6 +388,7 @@ export default function ReimaginePage() {
         method: "POST",
         body: fd,
       });
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Upload failed");
@@ -271,22 +402,42 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleDrop handles drag-drop file upload -> DragEvent to void
+  // =============================================================================
   function handleDrop(e: React.DragEvent) {
+    /*
+        handleDrop : processes drag-and-drop events to upload images
+        e variable : the React drag event
+    */
     e.preventDefault();
+    // ==================================
     if (e.dataTransfer.files.length > 0) {
       handleFileUpload(e.dataTransfer.files);
     }
   }
 
-  // ---- Character editing ----
-
+  // =============================================================================
+  // openEditChar opens character edit modal -> ReimagineCharacter to void
+  // =============================================================================
   function openEditChar(char: ReimagineCharacter) {
+    /*
+        openEditChar : opens the character editing modal with current values
+        char variable : the character to edit
+    */
     setEditingCharId(char.id);
     setEditCharLabel(char.label);
     setEditCharDesc(char.description);
   }
 
+  // =============================================================================
+  // saveCharEdits saves character edits -> void to void
+  // =============================================================================
   async function saveCharEdits() {
+    /*
+        saveCharEdits : persists edited character label and description
+    */
+    // ==================================
     if (!editingCharId || !slug) return;
     const updated = characters.map((c) =>
       c.id === editingCharId ? { ...c, label: editCharLabel, description: editCharDesc } : c,
@@ -302,11 +453,20 @@ export default function ReimaginePage() {
     } catch { /* best effort */ }
   }
 
+  // =============================================================================
+  // saveCharToLibrary saves character to library -> ReimagineCharacter to void
+  // =============================================================================
   async function saveCharToLibrary(char: ReimagineCharacter) {
+    /*
+        saveCharToLibrary : exports a reimagine character to the global character library
+        char variable : the character to save
+    */
+    // ==================================
     if (!slug || !char.sourceImageIds[0]) return;
     setSavingToLib((prev) => new Set(prev).add(char.id));
     try {
       const imgRes = await fetch(`/api/reimagine/${slug}/sources/${char.sourceImageIds[0]}`);
+      // ==================================
       if (!imgRes.ok) throw new Error("Failed to load image");
       const blob = await imgRes.blob();
       const fd = new FormData();
@@ -314,6 +474,7 @@ export default function ReimaginePage() {
       fd.append("label", char.label);
       fd.append("description", char.description);
       const res = await fetch("/api/library", { method: "POST", body: fd });
+      // ==================================
       if (!res.ok) throw new Error("Failed to save to library");
       setSavedToLib((prev) => new Set(prev).add(char.id));
     } catch (err) {
@@ -323,14 +484,21 @@ export default function ReimaginePage() {
     }
   }
 
-  // ---- Style ref upload ----
-
+  // =============================================================================
+  // handleLibraryStyleRef uses library image as style ref -> string to void
+  // =============================================================================
   async function handleLibraryStyleRef(charId: string) {
+    /*
+        handleLibraryStyleRef : fetches a library character image and sets it as style reference
+        charId variable : the library character ID to use
+    */
+    // ==================================
     if (!slug) return;
     setError(null);
     setShowLibPicker(false);
     try {
       const imgRes = await fetch(`/api/library/${charId}/image`);
+      // ==================================
       if (!imgRes.ok) throw new Error("Failed to load library image");
       const blob = await imgRes.blob();
       const file = new File([blob], `${charId}.png`, { type: "image/png" });
@@ -340,7 +508,15 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleStyleRefUpload uploads a style reference image -> File to void
+  // =============================================================================
   async function handleStyleRefUpload(file: File) {
+    /*
+        handleStyleRefUpload : uploads a file as the project style reference image
+        file variable : the image file to upload as style reference
+    */
+    // ==================================
     if (!slug) return;
     setError(null);
     const fd = new FormData();
@@ -350,6 +526,7 @@ export default function ReimaginePage() {
         method: "POST",
         body: fd,
       });
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Style upload failed");
@@ -361,14 +538,21 @@ export default function ReimaginePage() {
     }
   }
 
-  // ---- Save style to project ----
-
+  // =============================================================================
+  // saveStyleConfig persists style settings to project -> void to void
+  // =============================================================================
   async function saveStyleConfig() {
+    /*
+        saveStyleConfig : saves the current style mode, preset, and description to the server
+    */
+    // ==================================
     if (!slug) return;
     const body: Record<string, string> = { styleMode };
+    // ==================================
     if (styleMode === "preset") {
       body.stylePreset = stylePreset;
     }
+    // ==================================
     if (customStyleNote) {
       body.styleDescription = customStyleNote;
       savePromptToHistory(customStyleNote);
@@ -381,9 +565,14 @@ export default function ReimaginePage() {
     });
   }
 
-  // ---- Analyze ----
-
+  // =============================================================================
+  // handleAnalyze triggers AI image analysis -> void to void
+  // =============================================================================
   async function handleAnalyze() {
+    /*
+        handleAnalyze : sends images to the AI for scene and character analysis
+    */
+    // ==================================
     if (!slug) return;
     setAnalyzing(true);
     setError(null);
@@ -393,6 +582,7 @@ export default function ReimaginePage() {
         method: "POST",
         headers: apiHeaders(),
       });
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Analysis failed");
@@ -407,9 +597,14 @@ export default function ReimaginePage() {
     }
   }
 
-  // ---- Generate ----
-
+  // =============================================================================
+  // handleGenerate generates all reimagined images -> void to void
+  // =============================================================================
   const handleGenerate = useCallback(async () => {
+    /*
+        handleGenerate : iterates through entries and generates reimagined versions
+    */
+    // ==================================
     if (!slug) return;
     setGenerating(true);
     setError(null);
@@ -428,6 +623,7 @@ export default function ReimaginePage() {
           headers: imgApiHeaders(),
         });
         const result = await res.json();
+        // ==================================
         if (res.ok && result.status === "done") {
           done++;
           setDoneCount(done);
@@ -458,13 +654,28 @@ export default function ReimaginePage() {
     setStep("results");
   }, [slug, entries, settings, imageProviderId]);
 
+  // =============================================================================
+  // openEditPrompt opens prompt editor for an entry -> number to void
+  // =============================================================================
   function openEditPrompt(index: number) {
+    /*
+        openEditPrompt : opens the prompt editing UI for a specific entry
+        index variable : the entry index to edit
+    */
     const entry = entries[index];
     setEditingPromptIdx(index);
     setEditPromptText(entry.reimaginedPrompt || entry.prompt);
   }
 
+  // =============================================================================
+  // saveEntryPrompt saves edited prompt -> number to void
+  // =============================================================================
   async function saveEntryPrompt(index: number) {
+    /*
+        saveEntryPrompt : persists the edited reimagined prompt for an entry
+        index variable : the entry index whose prompt was edited
+    */
+    // ==================================
     if (!slug) return;
     const updated = entries.map((e, idx) =>
       idx === index ? { ...e, reimaginedPrompt: editPromptText } : e,
@@ -480,7 +691,15 @@ export default function ReimaginePage() {
     } catch { /* best effort */ }
   }
 
+  // =============================================================================
+  // handleRegenerateOne regenerates a single image -> number to void
+  // =============================================================================
   async function handleRegenerateOne(index: number) {
+    /*
+        handleRegenerateOne : regenerates the reimagined version of a single entry
+        index variable : the entry index to regenerate
+    */
+    // ==================================
     if (!slug) return;
     setEntries((prev) =>
       prev.map((e, idx) => (idx === index ? { ...e, status: "generating" as const } : e)),
@@ -492,6 +711,7 @@ export default function ReimaginePage() {
         headers: imgApiHeaders(),
       });
       const result = await res.json();
+      // ==================================
       if (!res.ok) {
         setEntries((prev) =>
           prev.map((e, idx) =>
@@ -521,18 +741,36 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // toggleSelectForRegen toggles image selection -> number to void
+  // =============================================================================
   function toggleSelectForRegen(index: number) {
+    /*
+        toggleSelectForRegen : toggles whether an image is selected for batch regeneration
+        index variable : the entry index to toggle
+    */
     setSelectedForRegen((prev) => {
       const next = new Set(prev);
+      // ==================================
       if (next.has(index)) next.delete(index); else next.add(index);
       return next;
     });
   }
 
+  // =============================================================================
+  // assignCharToIndices assigns character to entries -> string, number[] to void
+  // =============================================================================
   async function assignCharToIndices(charLabel: string, indices: number[]) {
+    /*
+        assignCharToIndices : assigns a character label to specified entry indices
+        charLabel variable : the character label to assign
+        indices variable : array of entry indices to assign to
+    */
+    // ==================================
     if (!slug) return;
     const idxSet = new Set(indices);
     const updated = entries.map((e, idx) => {
+      // ==================================
       if (!idxSet.has(idx)) return e;
       const used = new Set(e.characters_used);
       used.add(charLabel);
@@ -548,10 +786,20 @@ export default function ReimaginePage() {
     } catch { /* best effort */ }
   }
 
+  // =============================================================================
+  // removeCharFromIndices removes character from entries -> string, number[] to void
+  // =============================================================================
   async function removeCharFromIndices(charLabel: string, indices: number[]) {
+    /*
+        removeCharFromIndices : removes a character label from specified entry indices
+        charLabel variable : the character label to remove
+        indices variable : array of entry indices to remove from
+    */
+    // ==================================
     if (!slug) return;
     const idxSet = new Set(indices);
     const updated = entries.map((e, idx) => {
+      // ==================================
       if (!idxSet.has(idx)) return e;
       return { ...e, characters_used: e.characters_used.filter((c) => c !== charLabel) };
     });
@@ -565,15 +813,36 @@ export default function ReimaginePage() {
     } catch { /* best effort */ }
   }
 
+  // =============================================================================
+  // handleAssignChar assigns character to selected entries -> string to void
+  // =============================================================================
   function handleAssignChar(charLabel: string) {
+    /*
+        handleAssignChar : assigns a character to all currently selected entries
+        charLabel variable : the character label to assign
+    */
     assignCharToIndices(charLabel, Array.from(selectedForRegen));
   }
 
+  // =============================================================================
+  // handleRemoveChar removes character from selected entries -> string to void
+  // =============================================================================
   function handleRemoveChar(charLabel: string) {
+    /*
+        handleRemoveChar : removes a character from all currently selected entries
+        charLabel variable : the character label to remove
+    */
     removeCharFromIndices(charLabel, Array.from(selectedForRegen));
   }
 
+  // =============================================================================
+  // handleRegenerateSelected regenerates selected images -> void to void
+  // =============================================================================
   async function handleRegenerateSelected() {
+    /*
+        handleRegenerateSelected : regenerates all currently selected images
+    */
+    // ==================================
     if (!slug || selectedForRegen.size === 0) return;
     const indices = Array.from(selectedForRegen).sort((a, b) => a - b);
     setSelectedForRegen(new Set());
@@ -582,16 +851,28 @@ export default function ReimaginePage() {
     }
   }
 
-  // ---- Save ----
-
+  // =============================================================================
+  // loadSavedFolders fetches saved folder names -> void to void
+  // =============================================================================
   async function loadSavedFolders() {
+    /*
+        loadSavedFolders : loads the list of previously saved output folders
+    */
     try {
       const res = await fetch("/api/saved");
+      // ==================================
       if (res.ok) setSavedFolders(await res.json());
     } catch { /* ignore */ }
   }
 
+  // =============================================================================
+  // handleSave saves project images to a folder -> void to void
+  // =============================================================================
   async function handleSave() {
+    /*
+        handleSave : saves the generated images to a named output folder
+    */
+    // ==================================
     if (!slug || !saveName.trim()) return;
     try {
       await fetch(`/api/reimagine/${slug}/save`, {
@@ -605,7 +886,13 @@ export default function ReimaginePage() {
     }
   }
 
+  // =============================================================================
+  // handleNewSession resets to a fresh session -> void to void
+  // =============================================================================
   function handleNewSession() {
+    /*
+        handleNewSession : clears all state and starts a new reimagine session
+    */
     setSlug(null);
     setEntries([]);
     setCharacters([]);
@@ -626,7 +913,9 @@ export default function ReimaginePage() {
     fetch("/api/reimagine").then((r) => r.ok ? r.json() : []).then(setExistingProjects).catch(() => {});
   }
 
-  // ---- Render ----
+  // =====================================
+  // Render section
+  // =====================================
 
   const stepIndex = STEPS.findIndex((s) => s.key === step);
 
@@ -651,6 +940,7 @@ export default function ReimaginePage() {
         ))}
       </div>
 
+      {/* ================================== */}
       {error && (
         <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 16 }}>
           {error}
@@ -664,11 +954,14 @@ export default function ReimaginePage() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* ---- Step 1: Upload ---- */}
       {step === "upload" && (
         <div className="panel">
+          {/* ================================== */}
           {slug ? (
             <div style={{ marginBottom: 8 }}>
+              {/* ================================== */}
               {renamingId === slug ? (
                 <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
                   <input
@@ -714,6 +1007,7 @@ export default function ReimaginePage() {
               input.click();
             }}
           >
+            {/* ================================== */}
             {uploading ? (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 <div className="spinner-sm" /> Uploading...
@@ -723,6 +1017,7 @@ export default function ReimaginePage() {
             )}
           </div>
 
+          {/* ================================== */}
           {entries.length > 0 && (
             <>
               <p className="muted" style={{ marginTop: 12, fontSize: 12 }}>
@@ -742,6 +1037,7 @@ export default function ReimaginePage() {
           )}
 
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            {/* ================================== */}
             {slug && entries.some((e) => e.status === "done") && (
               <button
                 className="btn"
@@ -761,11 +1057,13 @@ export default function ReimaginePage() {
             </button>
           </div>
 
+          {/* ================================== */}
           {existingProjects.length > 0 && (
             <div style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
               <h3 style={{ fontSize: 14, marginBottom: 8, color: "var(--text)" }}>
                 {slug ? "Merge or Manage Projects" : "Load Existing Project"}
               </h3>
+              {/* ================================== */}
               {slug && (
                 <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
                   Merge copies source images into the current project. Re-analyze after merging for unified characters.
@@ -780,6 +1078,7 @@ export default function ReimaginePage() {
                   const style = p.stylePreset || (p.styleMode === "reference" ? "Reference" : "---");
                   return (
                     <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {/* ================================== */}
                       {renamingId === p.id ? (
                         <div style={{ display: "flex", gap: 4, alignItems: "center", padding: "6px 0" }}>
                           <input
@@ -807,7 +1106,7 @@ export default function ReimaginePage() {
                                 {total} images · {done}/{total} done · {style}
                               </div>
                             </div>
-                            <span style={{ fontSize: 11, flexShrink: 0, color: slug ? "var(--accent)" : "var(--text-dim)" }}>
+                            <span style={{ fontSize: 11, flexShrink: 0, color: slug ? "var(--accent)" : "var(--text-2)" }}>
                               {slug ? (merging ? "Merging..." : "Merge") : new Date(p.updatedAt).toLocaleDateString()}
                             </span>
                           </button>
@@ -836,6 +1135,7 @@ export default function ReimaginePage() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* ---- Step 2: Style ---- */}
       {step === "style" && (
         <div className="panel">
@@ -856,6 +1156,7 @@ export default function ReimaginePage() {
             </button>
           </div>
 
+          {/* ================================== */}
           {styleMode === "preset" && (
             <div className="style-grid">
               {STYLE_PRESETS.map((preset) => (
@@ -871,8 +1172,10 @@ export default function ReimaginePage() {
             </div>
           )}
 
+          {/* ================================== */}
           {styleMode === "reference" && (
             <div>
+              {/* ================================== */}
               {styleRefUrl ? (
                 <div style={{ textAlign: "center", marginBottom: 12 }}>
                   <img
@@ -909,6 +1212,7 @@ export default function ReimaginePage() {
                   >
                     Upload a style reference image
                   </div>
+                  {/* ================================== */}
                   {libraryChars.length > 0 && (
                     <button className="btn" style={{ alignSelf: "center" }} onClick={() => setShowLibPicker(true)}>
                       Pick from Library
@@ -917,6 +1221,7 @@ export default function ReimaginePage() {
                 </div>
               )}
 
+              {/* ================================== */}
               {showLibPicker && (
                 <div className="modal-overlay" onClick={() => setShowLibPicker(false)}>
                   <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
@@ -950,6 +1255,7 @@ export default function ReimaginePage() {
               placeholder="e.g., warm colors, soft lighting, whimsical mood..."
               className="prompt"
             />
+            {/* ================================== */}
             {promptHistory.length > 0 && (
               <div style={{ marginTop: 6 }}>
                 <span className="muted" style={{ fontSize: 11 }}>Recent: </span>
@@ -986,6 +1292,7 @@ export default function ReimaginePage() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* ---- Step 3: Characters ---- */}
       {step === "characters" && (
         <div className="panel">
@@ -994,6 +1301,7 @@ export default function ReimaginePage() {
             AI will analyze your images to identify scenes and recurring characters. This ensures characters stay consistent across all reimagined images.
           </p>
 
+          {/* ================================== */}
           {!analyzing && characters.length === 0 && entries.every((e) => !e.prompt) && (
             <div style={{ textAlign: "center", padding: 20 }}>
               <button
@@ -1009,6 +1317,7 @@ export default function ReimaginePage() {
             </div>
           )}
 
+          {/* ================================== */}
           {analyzing && (
             <div style={{ textAlign: "center", padding: 40 }}>
               <div className="spinner" style={{ margin: "0 auto 12px" }} />
@@ -1016,6 +1325,7 @@ export default function ReimaginePage() {
             </div>
           )}
 
+          {/* ================================== */}
           {!analyzing && characters.length > 0 && (
             <>
               <h3 style={{ fontSize: 14, marginBottom: 8, color: "var(--text)" }}>
@@ -1024,6 +1334,7 @@ export default function ReimaginePage() {
               <div className="char-grid" style={{ marginBottom: 16 }}>
                 {characters.map((char) => (
                   <div key={char.id} className="char-card">
+                    {/* ================================== */}
                     {char.referenceImagePath ? (
                       <img
                         src={`/api/reimagine/${slug}/sources/${char.sourceImageIds[0]}`}
@@ -1056,6 +1367,7 @@ export default function ReimaginePage() {
                 ))}
               </div>
 
+              {/* ================================== */}
               {/* Edit character modal */}
               {editingCharId && (
                 <div className="modal-overlay" onClick={() => setEditingCharId(null)}>
@@ -1083,6 +1395,7 @@ export default function ReimaginePage() {
             </>
           )}
 
+          {/* ================================== */}
           {!analyzing && entries.some((e) => e.prompt) && (
             <>
               <h3 style={{ fontSize: 14, marginBottom: 8, color: "var(--text)" }}>
@@ -1099,9 +1412,10 @@ export default function ReimaginePage() {
                       />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="scene-meta">Image {i + 1}</div>
-                        <p style={{ fontSize: 12, margin: 0, color: "var(--text-dim)" }}>
+                        <p style={{ fontSize: 12, margin: 0, color: "var(--text-2)" }}>
                           {entry.prompt.slice(0, 120)}...
                         </p>
+                        {/* ================================== */}
                         {entry.characters_used.length > 0 && (
                           <div style={{ marginTop: 4 }}>
                             {entry.characters_used.map((c) => (
@@ -1121,6 +1435,7 @@ export default function ReimaginePage() {
             <button className="btn" onClick={() => setStep("style")}>
               Back
             </button>
+            {/* ================================== */}
             {characters.length === 0 && entries.every((e) => !e.prompt) && (
               <button
                 className="btn"
@@ -1134,6 +1449,7 @@ export default function ReimaginePage() {
                 Skip (no character consistency)
               </button>
             )}
+            {/* ================================== */}
             {entries.some((e) => e.prompt) && (
               <button
                 className="btn btn-primary"
@@ -1147,6 +1463,7 @@ export default function ReimaginePage() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* ---- Step 4: Generating ---- */}
       {step === "generate" && (
         <div className="panel">
@@ -1167,6 +1484,7 @@ export default function ReimaginePage() {
                     alt={`Source ${i + 1}`}
                     className="reimagine-pair-img"
                   />
+                  {/* ================================== */}
                   {entry.status === "done" && entry.outputImagePath ? (
                     <img
                       src={`/api/reimagine/${slug}/outputs/${i}`}
@@ -1176,8 +1494,9 @@ export default function ReimaginePage() {
                   ) : (
                     <div className="reimagine-pair-img" style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      background: "var(--surface)", color: "var(--text-dim)", fontSize: 12,
+                      background: "var(--s1)", color: "var(--text-2)", fontSize: 12,
                     }}>
+                      {/* ================================== */}
                       {entry.status === "generating" ? (
                         <div className="spinner-sm" />
                       ) : entry.status === "failed" ? (
@@ -1188,6 +1507,7 @@ export default function ReimaginePage() {
                     </div>
                   )}
                 </div>
+                {/* ================================== */}
                 {entry.error && (
                   <div style={{ padding: "4px 8px", fontSize: 11, color: "var(--danger)" }}>
                     {entry.error}
@@ -1199,6 +1519,7 @@ export default function ReimaginePage() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* ---- Step 5: Results ---- */}
       {step === "results" && (
         <div className="panel">
@@ -1236,6 +1557,7 @@ export default function ReimaginePage() {
                       title={`Remove ${c}`}
                     >{c} x</span>
                   ))}
+                  {/* ================================== */}
                   {characters.length > 0 && (
                     <select
                       style={{ fontSize: 9, padding: "1px 2px", background: "rgba(0,0,0,0.5)", color: "#fff", border: "1px solid var(--border)", borderRadius: 3, cursor: "pointer" }}
@@ -1256,6 +1578,7 @@ export default function ReimaginePage() {
                     alt={`Source ${i + 1}`}
                     className="reimagine-pair-img"
                   />
+                  {/* ================================== */}
                   {entry.status === "done" && entry.outputImagePath ? (
                     <img
                       src={`/api/reimagine/${slug}/outputs/${i}`}
@@ -1265,8 +1588,9 @@ export default function ReimaginePage() {
                   ) : (
                     <div className="reimagine-pair-img" style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      background: "var(--surface)", color: "var(--text-dim)",
+                      background: "var(--s1)", color: "var(--text-2)",
                     }}>
+                      {/* ================================== */}
                       {entry.status === "failed" ? (
                         <span style={{ color: "var(--danger)", fontSize: 12 }}>Failed</span>
                       ) : (
@@ -1276,6 +1600,7 @@ export default function ReimaginePage() {
                   )}
                 </div>
                 <div style={{ padding: 8 }}>
+                  {/* ================================== */}
                   {editingPromptIdx === i ? (
                     <div style={{ marginBottom: 6 }}>
                       <textarea
@@ -1292,7 +1617,7 @@ export default function ReimaginePage() {
                   ) : (
                     <button
                       className="btn btn-sm"
-                      style={{ width: "100%", marginBottom: 4, fontSize: 11, color: "var(--text-dim)" }}
+                      style={{ width: "100%", marginBottom: 4, fontSize: 11, color: "var(--text-2)" }}
                       onClick={() => openEditPrompt(i)}
                     >
                       Edit Prompt
@@ -1311,9 +1636,10 @@ export default function ReimaginePage() {
             ))}
           </div>
 
+          {/* ================================== */}
           {selectedForRegen.size > 0 && characters.length > 0 && (
             <div style={{ marginTop: 12, padding: 10, border: "1px solid var(--border)", borderRadius: 8 }}>
-              <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-dim)" }}>
+              <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-2)" }}>
                 Assign character to {selectedForRegen.size} selected image(s):
               </div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -1334,7 +1660,7 @@ export default function ReimaginePage() {
                 );
                 return selectedChars.size > 0 ? (
                   <div style={{ marginTop: 6 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>Remove from selected:</div>
+                    <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>Remove from selected:</div>
                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                       {Array.from(selectedChars).map((label) => (
                         <button
@@ -1360,6 +1686,7 @@ export default function ReimaginePage() {
             <button className="btn" onClick={() => setStep("characters")}>
               Edit Characters
             </button>
+            {/* ================================== */}
             {selectedForRegen.size > 0 && (
               <button className="btn btn-primary" onClick={handleRegenerateSelected}>
                 Regenerate Selected ({selectedForRegen.size})
@@ -1376,13 +1703,15 @@ export default function ReimaginePage() {
             </button>
           </div>
 
+          {/* ================================== */}
           {saveModalOpen && (
             <div className="modal-overlay" onClick={() => setSaveModalOpen(false)}>
               <div className="modal" onClick={(e) => e.stopPropagation()}>
                 <h2>Save Images</h2>
+                {/* ================================== */}
                 {savedFolders.length > 0 && (
                   <div style={{ marginBottom: 12 }}>
-                    <label style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6, display: "block" }}>Existing folders</label>
+                    <label style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 6, display: "block" }}>Existing folders</label>
                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                       {savedFolders.map((f) => (
                         <button
@@ -1421,3 +1750,6 @@ export default function ReimaginePage() {
     </div>
   );
 }
+// =============================================================================
+// End of ReimaginePage
+// =============================================================================

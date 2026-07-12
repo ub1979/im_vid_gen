@@ -1,8 +1,28 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// generate-character route : generates a character portrait by optionally
+//                            enhancing the description with a text LLM, then
+//                            rendering it with an image provider and saving
+//                            the result to the character library.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import { NextResponse } from "next/server";
 import { getImageProviderAdapter, getTextLLMAdapter } from "@/lib/providers/registry";
 import { saveLibraryCharacterImage, addLibraryCharacter } from "@/lib/storage";
 import { z } from "zod";
+// =============================================================================
 
+// =============================================================================
+// Request schema validation
+// =============================================================================
 const requestSchema = z.object({
   description: z.string().min(1).max(4000),
   label: z.string().min(1).max(200),
@@ -12,26 +32,42 @@ const requestSchema = z.object({
   sourceMime: z.string().optional(),
 });
 
+// =============================================================================
+// Function handles POST to generate a character portrait -> Request to NextResponse
+// =============================================================================
 export async function POST(request: Request) {
+  /*
+      POST : generates a character portrait from description with optional reference image
+      request variable : incoming HTTP request with JSON body matching requestSchema
+  */
   try {
+    // =====================================
+    // Extract headers and validate request body
+    // =====================================
     const apiKey = request.headers.get("x-provider-key") || "";
     const baseUrl = request.headers.get("x-base-url") || undefined;
     const body = await request.json();
     const parsed = requestSchema.safeParse(body);
+    // ==================================
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
 
     const { description, label, imageProvider, textProvider, sourceImageBase64, sourceMime } = parsed.data;
 
+    // =====================================
     // Step 1: Enhance description using text LLM
+    // =====================================
     const textLLM = getTextLLMAdapter(textProvider.id);
     let enhancedPrompt: string;
 
+    // ==================================
     if (sourceImageBase64) {
       enhancedPrompt = `Using the attached reference image, generate a standalone character portrait of ONLY "${label}": ${description}. Show just this one character in a clean portrait composition, matching their exact visual design from the reference. High quality, detailed.`;
+    // ==================================
     } else {
       enhancedPrompt = `A detailed character portrait: ${description}. High quality, detailed, professional illustration style.`;
+      // ==================================
       if (textLLM.generateText) {
         try {
           enhancedPrompt = await textLLM.generateText({
@@ -42,12 +78,15 @@ export async function POST(request: Request) {
             model: textProvider.model,
           });
         } catch {
+          // ======================
           // Fall back to basic prompt
         }
       }
     }
 
+    // =====================================
     // Step 2: Generate character image
+    // =====================================
     const imgProvider = getImageProviderAdapter(imageProvider.id);
     const referenceImages = sourceImageBase64
       ? [Buffer.from(sourceImageBase64, "base64")]
@@ -64,7 +103,9 @@ export async function POST(request: Request) {
       model: imageProvider.model,
     });
 
+    // =====================================
     // Step 3: Save to library with generation metadata
+    // =====================================
     const id = crypto.randomUUID();
     const imagePath = await saveLibraryCharacterImage(id, result.image);
     const character = await addLibraryCharacter({
@@ -98,3 +139,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// =============================================================================
+// =============================================================================

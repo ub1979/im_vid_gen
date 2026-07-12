@@ -1,13 +1,41 @@
 "use client";
 
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// ScenePage : scene generation wizard (characters -> story -> prompts -> gen)
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Imports
+// =============================================================================
 import { Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import type { LibraryCharacter } from "@/lib/types";
 import MentionTextarea from "@/components/MentionTextarea";
+import { loadSettings, getApiKey, type SettingsState } from "@/lib/settings";
+// =============================================================================
 
+// =============================================================================
+// Type defines the wizard step identifiers
+// =============================================================================
 type Step = "characters" | "text" | "preview" | "generate" | "review";
+/*
+    Step : union of valid wizard step names representing each phase of the scene generation flow
+*/
 
+// =============================================================================
+// Interface defines a scene description object
+// =============================================================================
 interface SceneDesc {
+  /*
+      SceneDesc : describes a single scene with prompt, timing, and generation status
+  */
   index: number;
   time_start: number;
   time_end: number;
@@ -19,36 +47,13 @@ interface SceneDesc {
   error?: string;
 }
 
-const STORAGE_KEY = "image_creator_settings";
-
-const DEFAULTS: Record<string, string> = {
-  defaultImageProvider: "comfyui",
-  defaultImageModel: "flux2_dev_fp8mixed.safetensors",
-  defaultTextProvider: "ollama",
-  defaultTextModel: "glm-5.2:cloud",
-  ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://localhost:8188",
-};
-
-function loadSettings() {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-  } catch { return DEFAULTS; }
-}
-
-function getApiKey(settings: Record<string, string>, providerId: string): string {
-  const keyMap: Record<string, string> = {
-    gemini: settings.geminiKey || "",
-    openai: settings.openaiKey || "",
-    claude: settings.claudeKey || "",
-    qwen: settings.qwenKey || "",
-  };
-  return keyMap[providerId] || "";
-}
-
+// =============================================================================
+// Function wraps SceneContent in Suspense -> void to JSX.Element
+// =============================================================================
 export default function ScenePage() {
+  /*
+      ScenePage : default export wrapper that provides a Suspense boundary for SceneContent
+  */
   return (
     <Suspense fallback={<div className="page page-center" style={{ padding: "40px 0" }}><div className="spinner" /></div>}>
       <SceneContent />
@@ -56,20 +61,39 @@ export default function ScenePage() {
   );
 }
 
+// =============================================================================
+// Function renders the full scene generation wizard -> void to JSX.Element
+// =============================================================================
 function SceneContent() {
+  /*
+      SceneContent : main wizard component with multi-step flow for selecting characters,
+      entering story text, generating scene descriptions, generating images, and reviewing results
+  */
+
+  // =====================================
+  // Wizard step and UI state
+  // =====================================
   const [step, setStep] = useState<Step>("characters");
   const [library, setLibrary] = useState<LibraryCharacter[]>([]);
   const [selectedCharIds, setSelectedCharIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<"single" | "sequence">("sequence");
   const [keyframeCount, setKeyframeCount] = useState(12);
   const [text, setText] = useState("");
+
+  // =====================================
+  // Scene generation state
+  // =====================================
   const [scenes, setScenes] = useState<SceneDesc[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [generatingScenes, setGeneratingScenes] = useState(false);
   const [generatingImages, setGeneratingImages] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
-  const [settings, setSettings] = useState<Record<string, string>>({});
+
+  // =====================================
+  // Settings and save state
+  // =====================================
+  const [settings, setSettings] = useState<SettingsState>(loadSettings());
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [deleteAfterSave, setDeleteAfterSave] = useState(false);
@@ -79,17 +103,25 @@ function SceneContent() {
 
   const searchParams = useSearchParams();
 
+  // =====================================
+  // Load settings and library on mount
+  // =====================================
   useEffect(() => {
     setSettings(loadSettings());
     fetch("/api/library").then((r) => r.json()).then(setLibrary).catch(() => {});
   }, []);
 
+  // =====================================
+  // Load project from URL params
+  // =====================================
   useEffect(() => {
     const loadSlug = searchParams.get("load");
+    // ==================================
     if (!loadSlug) return;
     setLoadingProject(true);
     fetch(`/api/projects/${loadSlug}`)
       .then((r) => {
+        // ==================================
         if (!r.ok) throw new Error("Project not found");
         return r.json();
       })
@@ -116,20 +148,39 @@ function SceneContent() {
 
   const selectedChars = library.filter((c) => selectedCharIds.has(c.id));
 
+  // =============================================================================
+  // Function toggles character selection -> string to void
+  // =============================================================================
   function toggleChar(id: string) {
+    /*
+        toggleChar : toggles a character in/out of the selected set
+        id variable : the character id to toggle
+    */
     setSelectedCharIds((prev) => {
       const next = new Set(prev);
+      // ==================================
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
 
+  // =====================================
+  // Provider configuration
+  // =====================================
   const imageProviderId = settings.defaultImageProvider || "comfyui";
   const imageModel = settings.defaultImageModel || "qwen_image_fp8_e4m3fn.safetensors";
   const textProviderId = settings.defaultTextProvider || "ollama";
   const textModel = settings.defaultTextModel || "glm-5.2:cloud";
 
+  // =============================================================================
+  // Function generates scene descriptions from text -> void to Promise<void>
+  // =============================================================================
   async function handleGenerateSceneDescriptions() {
+    /*
+        handleGenerateSceneDescriptions : sends text and characters to LLM to generate
+        scene descriptions, creates a project session, uploads characters, and stores results
+    */
+    // ==================================
     if (!text.trim()) return;
     setGeneratingScenes(true);
     setError(null);
@@ -137,11 +188,13 @@ function SceneContent() {
     const count = mode === "single" ? 1 : keyframeCount;
     const apiKey = getApiKey(settings, textProviderId);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // ==================================
     if (apiKey) headers["x-provider-key"] = apiKey;
+    // ==================================
     if (textProviderId === "ollama" && settings.ollamaUrl) headers["x-base-url"] = settings.ollamaUrl;
+    // ==================================
     if (textProviderId === "comfyui" && settings.comfyuiUrl) headers["x-base-url"] = settings.comfyuiUrl;
 
-    // First create a session/project
     try {
       const createRes = await fetch("/api/projects", {
         method: "POST",
@@ -154,17 +207,19 @@ function SceneContent() {
           },
         }),
       });
+      // ==================================
       if (!createRes.ok) throw new Error("Failed to create session");
       const project = await createRes.json();
       setSessionId(project.id);
 
-      // Upload characters into the project
       for (const char of selectedChars) {
         const fd = new FormData();
         fd.append("label", char.label);
         fd.append("description", char.description || "");
+        // ==================================
         if (char.imagePath) {
           const imgRes = await fetch(`/api/library/${char.id}/image`);
+          // ==================================
           if (imgRes.ok) {
             const blob = await imgRes.blob();
             fd.append("file", blob, `${char.id}.png`);
@@ -173,7 +228,6 @@ function SceneContent() {
         await fetch(`/api/projects/${project.id}/characters`, { method: "POST", body: fd });
       }
 
-      // Update project with text and settings
       await fetch(`/api/projects/${project.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -188,11 +242,11 @@ function SceneContent() {
         }),
       });
 
-      // Generate scene descriptions
       const genRes = await fetch(`/api/projects/${project.id}/generate-scenes`, {
         method: "POST",
         headers,
       });
+      // ==================================
       if (!genRes.ok) {
         const errData = await genRes.json().catch(() => ({}));
         throw new Error(errData.error || "Scene generation failed");
@@ -209,12 +263,22 @@ function SceneContent() {
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // =============================================================================
+  // Function updates a scene prompt with debounced save -> number, string to void
+  // =============================================================================
   function handleEditPrompt(index: number, newPrompt: string) {
+    /*
+        handleEditPrompt : updates a scene prompt locally and debounces a save to the server
+        index variable : the scene index to update
+        newPrompt variable : the new prompt text
+    */
     setScenes((prev) => {
       const updated = prev.map((s) =>
         s.index === index ? { ...s, prompt: newPrompt } : s
       );
+      // ==================================
       if (sessionId) {
+        // ==================================
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => {
           fetch(`/api/projects/${sessionId}`, {
@@ -228,7 +292,15 @@ function SceneContent() {
     });
   }
 
+  // =============================================================================
+  // Function generates images for all pending scenes -> void to Promise<void>
+  // =============================================================================
   const handleGenerateImages = useCallback(async () => {
+    /*
+        handleGenerateImages : iterates all scenes and generates images for each pending one,
+        updating status as each completes or fails
+    */
+    // ==================================
     if (!sessionId) return;
     setGeneratingImages(true);
     setError(null);
@@ -237,12 +309,16 @@ function SceneContent() {
 
     const apiKey = getApiKey(settings, imageProviderId);
     const headers: Record<string, string> = {};
+    // ==================================
     if (apiKey) headers["x-provider-key"] = apiKey;
+    // ==================================
     if (imageProviderId === "comfyui" && settings.comfyuiUrl) headers["x-base-url"] = settings.comfyuiUrl;
+    // ==================================
     if (imageProviderId === "ollama" && settings.ollamaUrl) headers["x-base-url"] = settings.ollamaUrl;
 
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
+      // ==================================
       if (scene.status === "done") { done++; continue; }
 
       setScenes((prev) => prev.map((s) =>
@@ -256,6 +332,7 @@ function SceneContent() {
           body: JSON.stringify({ provider: { id: imageProviderId, model: imageModel }, aspectRatio }),
         });
         const result = await res.json();
+        // ==================================
         if (res.ok && result.status === "done") {
           done++;
           setDoneCount(done);
@@ -278,12 +355,23 @@ function SceneContent() {
     setStep("review");
   }, [sessionId, scenes, settings, imageProviderId, imageModel, aspectRatio]);
 
+  // =============================================================================
+  // Function regenerates a single scene image -> number to Promise<void>
+  // =============================================================================
   async function handleRegenerateOne(index: number) {
+    /*
+        handleRegenerateOne : regenerates the image for a single scene by index
+        index variable : the scene index to regenerate
+    */
+    // ==================================
     if (!sessionId) return;
     const apiKey = getApiKey(settings, imageProviderId);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // ==================================
     if (apiKey) headers["x-provider-key"] = apiKey;
+    // ==================================
     if (imageProviderId === "comfyui" && settings.comfyuiUrl) headers["x-base-url"] = settings.comfyuiUrl;
+    // ==================================
     if (imageProviderId === "ollama" && settings.ollamaUrl) headers["x-base-url"] = settings.ollamaUrl;
 
     setScenes((prev) => prev.map((s) =>
@@ -313,7 +401,14 @@ function SceneContent() {
     }
   }
 
+  // =============================================================================
+  // Function saves generated images to a named folder -> void to Promise<void>
+  // =============================================================================
   async function handleSave() {
+    /*
+        handleSave : saves the current session images to a named folder on disk
+    */
+    // ==================================
     if (!sessionId || !saveName.trim()) return;
     try {
       await fetch(`/api/sessions/${sessionId}/save`, {
@@ -328,6 +423,9 @@ function SceneContent() {
     }
   }
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <div className="page">
       <h1>Generate Scene</h1>
@@ -343,6 +441,7 @@ function SceneContent() {
         ))}
       </div>
 
+      {/* ================================== */}
       {loadingProject && (
         <div className="page-center" style={{ padding: "40px 0" }}>
           <div className="spinner" />
@@ -355,6 +454,7 @@ function SceneContent() {
         <strong>Text LLM:</strong> {textProviderId} / {textModel}
       </div>
 
+      {/* ================================== */}
       {error && (
         <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 16 }}>
           {error}
@@ -362,6 +462,7 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Step 1: Select characters */}
       {step === "characters" && (
         <div className="panel">
@@ -369,6 +470,7 @@ function SceneContent() {
           <p className="muted" style={{ marginBottom: 12, fontSize: 12 }}>
             Pick characters from your library to use in this scene. You can also skip this step.
           </p>
+          {/* ================================== */}
           {library.length === 0 ? (
             <p className="muted">No characters in library. <a href="/library">Add some</a> or <a href="/generate-character">generate one</a>.</p>
           ) : (
@@ -379,6 +481,7 @@ function SceneContent() {
                   className={`char-card selectable ${selectedCharIds.has(char.id) ? "selected" : ""}`}
                   onClick={() => toggleChar(char.id)}
                 >
+                  {/* ================================== */}
                   {char.imagePath ? (
                     <img src={`/api/library/${char.id}/image`} alt={char.label} className="char-card-img" />
                   ) : (
@@ -400,6 +503,7 @@ function SceneContent() {
                 <option value="sequence">Sequence of keyframes</option>
               </select>
             </div>
+            {/* ================================== */}
             {mode === "sequence" && (
               <div className="field" style={{ flex: 1, marginBottom: 0, minWidth: 140 }}>
                 <label>Number of keyframes</label>
@@ -424,12 +528,14 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Step 2: Enter text */}
       {step === "text" && (
         <div className="panel">
           <h2>Enter Your Text</h2>
           <p className="muted" style={{ marginBottom: 12, fontSize: 12 }}>
             Paste your story, lyrics, poem, or scene description. Use <strong>@</strong> to reference characters from your library.
+            {/* ================================== */}
             {selectedChars.length > 0 && (
               <>
                 <br />
@@ -456,11 +562,13 @@ function SceneContent() {
             />
           </div>
 
+          {/* ================================== */}
           {/* Show selected characters with thumbnails */}
           {selectedChars.length > 0 && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
               {selectedChars.map((c) => (
                 <div key={c.id} className="mention-selected-chip">
+                  {/* ================================== */}
                   {c.imagePath && (
                     <img src={`/api/library/${c.id}/image`} alt={c.label} className="mention-chip-img" />
                   )}
@@ -494,6 +602,7 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Step 3: Preview & approve scene descriptions */}
       {step === "preview" && (
         <div className="panel">
@@ -506,6 +615,7 @@ function SceneContent() {
             <div key={scene.index} className="scene-preview">
               <div className="scene-meta">
                 Scene {i + 1} &middot; &ldquo;{scene.lyric_excerpt}&rdquo;
+                {/* ================================== */}
                 {scene.characters_used.length > 0 && (
                   <> &middot; {scene.characters_used.map((c) => <span key={c} className="tag">{c}</span>)}</>
                 )}
@@ -528,6 +638,7 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Step 4: Generating */}
       {step === "generate" && (
         <div className="panel">
@@ -542,6 +653,7 @@ function SceneContent() {
           <div className="scene-grid">
             {scenes.map((scene, i) => (
               <div key={scene.index} className="scene-card-mini">
+                {/* ================================== */}
                 {scene.status === "done" && scene.imagePath ? (
                   <img
                     src={`/api/projects/${sessionId}/keyframes/${scene.index}`}
@@ -552,6 +664,7 @@ function SceneContent() {
                   />
                 ) : (
                   <div className="scene-card-img scene-card-placeholder">
+                    {/* ================================== */}
                     {scene.status === "generating" ? <div className="spinner-sm" /> : scene.status === "failed" ? "Failed" : `Scene ${i + 1}`}
                   </div>
                 )}
@@ -561,6 +674,7 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Step 5: Review results */}
       {step === "review" && (
         <div className="panel">
@@ -572,6 +686,7 @@ function SceneContent() {
           <div className="scene-grid-review">
             {scenes.map((scene, i) => (
               <div key={scene.index} className="scene-review-card">
+                {/* ================================== */}
                 {scene.status === "done" && scene.imagePath ? (
                   <img
                     src={`/api/projects/${sessionId}/keyframes/${scene.index}`}
@@ -582,6 +697,7 @@ function SceneContent() {
                   />
                 ) : (
                   <div className="scene-review-img scene-card-placeholder">
+                    {/* ================================== */}
                     {scene.status === "failed" ? "Failed" : "No image"}
                   </div>
                 )}
@@ -594,6 +710,7 @@ function SceneContent() {
                     onChange={(e) => handleEditPrompt(scene.index, e.target.value)}
                   />
                   <button className="btn btn-sm" style={{ width: "100%", marginTop: 4 }} onClick={() => handleRegenerateOne(scene.index)}>
+                    {/* ================================== */}
                     {scene.status === "generating" ? "Generating..." : "Regenerate"}
                   </button>
                 </div>
@@ -606,6 +723,7 @@ function SceneContent() {
             <button className="btn" onClick={handleGenerateImages}>Regenerate All</button>
           </div>
 
+          {/* ================================== */}
           {/* Save modal */}
           {saveModalOpen && (
             <div className="modal-overlay" onClick={() => setSaveModalOpen(false)}>
@@ -629,6 +747,7 @@ function SceneContent() {
         </div>
       )}
 
+      {/* ================================== */}
       {/* Lightbox */}
       {lightboxIndex !== null && sessionId && (
         <div
@@ -673,3 +792,7 @@ function SceneContent() {
     </div>
   );
 }
+
+// =============================================================================
+// End of file
+// =============================================================================

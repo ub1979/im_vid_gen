@@ -1,33 +1,37 @@
 "use client";
 
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// GenerateVideoPage : video generation workspace with frame picker,
+//                     prompt, model selection, and generation history
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Imports
+// =============================================================================
 import { useState, useEffect, useRef } from "react";
 import type { LibraryCharacter } from "@/lib/types";
 import { PIAPI_VIDEO_CATALOG, findModelDef } from "@/lib/piapi-video-catalog";
 import MentionTextarea from "@/components/MentionTextarea";
-
-const STORAGE_KEY = "image_creator_settings";
-
-const DEFAULTS: Record<string, string> = {
-  defaultImageProvider: "comfyui",
-  defaultImageModel: "flux2_dev_fp8mixed.safetensors",
-  defaultTextProvider: "ollama",
-  defaultTextModel: "glm-5.2:cloud",
-  defaultVideoProvider: "comfyui",
-  defaultVideoModel: "wan-2.1",
-  ollamaUrl: "http://localhost:11434",
-  comfyuiUrl: "http://localhost:8188",
-  piapiKey: "",
-};
-
-function loadSettings() {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-  } catch { return DEFAULTS; }
-}
+import { loadSettings, getApiKey, type SettingsState } from "@/lib/settings";
+// =============================================================================
 
 
+// =============================================================================
+/*
+    ProjectScene : represents a single scene within a project
+    index : scene position in the project
+    prompt : text prompt used for this scene
+    imagePath : optional path to the generated image
+    status : current generation status
+*/
+// =============================================================================
 interface ProjectScene {
   index: number;
   prompt: string;
@@ -35,19 +39,53 @@ interface ProjectScene {
   status: string;
 }
 
+// =============================================================================
+/*
+    Project : represents a project containing multiple scenes
+    id : unique project identifier
+    name : display name of the project
+    scenes : array of scenes in this project
+*/
+// =============================================================================
 interface Project {
   id: string;
   name: string;
   scenes: ProjectScene[];
 }
 
+// =============================================================================
+/*
+    ImageSourceType : union type for frame image source categories
+*/
+// =============================================================================
 type ImageSourceType = "project" | "library" | "upload";
+
+// =============================================================================
+/*
+    FrameImageSource : discriminated union describing the origin of a frame image
+    type "project" : image from a project scene
+    type "library" : image from the character library
+    type "base64" : uploaded image as base64 data
+    null : no frame source selected
+*/
+// =============================================================================
 type FrameImageSource =
   | { type: "project"; projectId: string; sceneIndex: number }
   | { type: "library"; characterId: string }
   | { type: "base64"; data: string }
   | null;
 
+// =============================================================================
+/*
+    FrameSelection : UI state for a frame picker panel
+    sourceType : which source tab is active
+    projectId : selected project ID
+    sceneIndex : selected scene index within the project
+    charId : selected character ID from library
+    uploadPreview : object URL for previewing uploaded image
+    uploadBase64 : base64 encoded uploaded image data
+*/
+// =============================================================================
 interface FrameSelection {
   sourceType: ImageSourceType;
   projectId: string;
@@ -57,6 +95,18 @@ interface FrameSelection {
   uploadBase64: string | null;
 }
 
+// =============================================================================
+/*
+    VideoMeta : metadata for a generated video in history
+    videoId : unique identifier for the generated video
+    createdAt : ISO timestamp of when the video was created
+    prompt : original text prompt used
+    enhancedPrompt : LLM-enhanced version of the prompt if used
+    firstFrameSource : source of the first frame image
+    lastFrameSource : source of the last frame image
+    generation : provider and model settings used for generation
+*/
+// =============================================================================
 interface VideoMeta {
   videoId: string;
   createdAt: string;
@@ -67,6 +117,9 @@ interface VideoMeta {
   generation: Record<string, string | number>;
 }
 
+// =====================================
+// Constants
+// =====================================
 const emptyFrame = (): FrameSelection => ({
   sourceType: "project",
   projectId: "",
@@ -76,17 +129,35 @@ const emptyFrame = (): FrameSelection => ({
   uploadBase64: null,
 });
 
+// =============================================================================
+// GenerateVideoPage renders the video generation workspace -> void to JSX.Element
+// =============================================================================
 export default function GenerateVideoPage() {
-  const [settings, setSettings] = useState<Record<string, string>>(DEFAULTS);
+  /*
+      GenerateVideoPage : main page component for video generation
+                          provides frame selection, prompt editing,
+                          model configuration, and generation history
+  */
+
+  // =====================================
+  // State — settings and data
+  // =====================================
+  const [settings, setSettings] = useState<SettingsState>(loadSettings());
   const [projects, setProjects] = useState<Project[]>([]);
   const [library, setLibrary] = useState<LibraryCharacter[]>([]);
 
+  // =====================================
+  // State — frame selection
+  // =====================================
   const [firstFrame, setFirstFrame] = useState<FrameSelection>(emptyFrame());
   const [lastFrame, setLastFrame] = useState<FrameSelection>(emptyFrame());
   const [useLastFrame, setUseLastFrame] = useState(false);
   const firstFileRef = useRef<HTMLInputElement>(null);
   const lastFileRef = useRef<HTMLInputElement>(null);
 
+  // =====================================
+  // State — video configuration
+  // =====================================
   const [videoProvider, setVideoProvider] = useState("comfyui");
   const [videoVariant, setVideoVariant] = useState("");
   const [videoMode, setVideoMode] = useState("");
@@ -97,8 +168,14 @@ export default function GenerateVideoPage() {
   const [fps, setFps] = useState(16);
   const [duration, setDuration] = useState(5);
 
+  // =====================================
+  // State — character mentions
+  // =====================================
   const [mentionedChars, setMentionedChars] = useState<Set<string>>(new Set());
 
+  // =====================================
+  // State — generation status
+  // =====================================
   const [enhancing, setEnhancing] = useState(false);
   const [enhancedPrompt, setEnhancedPrompt] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -110,15 +187,20 @@ export default function GenerateVideoPage() {
   const [videoHistory, setVideoHistory] = useState<VideoMeta[]>([]);
   const [extractingFrame, setExtractingFrame] = useState(false);
 
+  // =====================================
+  // Initialization effect
+  // =====================================
   useEffect(() => {
     const s = loadSettings();
     setSettings(s);
     const provider = s.defaultVideoProvider || "comfyui";
     setVideoProvider(provider);
     const def = findModelDef(provider);
+    // ==================================
     if (def) {
       setVideoVariant(def.defaultVariant);
       setVideoMode(def.defaultMode || "");
+      // ==================================
       if (def.durations.length > 0) setDuration(def.defaultDuration);
     }
     fetch("/api/projects").then(r => r.json()).then((p: Project[]) => {
@@ -138,35 +220,63 @@ export default function GenerateVideoPage() {
     }).catch(() => {});
   }, []);
 
+  // =====================================
+  // Derived values
+  // =====================================
   const isPiAPI = videoProvider.startsWith("piapi");
   const modelDef = isPiAPI ? findModelDef(videoProvider) : null;
   const textProviderId = settings.defaultTextProvider || "ollama";
   const textModelName = settings.defaultTextModel || "";
 
+  // =============================================================================
+  // Function refreshes the video history list -> void to void
+  // =============================================================================
   function refreshHistory() {
+    /*
+        refreshHistory : fetches the latest video generation history from the API
+    */
     fetch("/api/generate-video?list=true").then(r => r.json()).then(d => {
       setVideoHistory(d.videos || []);
     }).catch(() => {});
   }
 
+  // =============================================================================
+  // Function converts a frame image source to a frame selection -> FrameImageSource to FrameSelection
+  // =============================================================================
   function sourceToFrame(src: FrameImageSource): FrameSelection {
+    /*
+        sourceToFrame : maps a persisted frame source back into UI selection state
+        src : the frame image source from video metadata
+    */
+    // ==================================
     if (!src) return emptyFrame();
+    // ==================================
     if (src.type === "project") {
       return { ...emptyFrame(), sourceType: "project", projectId: src.projectId, sceneIndex: src.sceneIndex };
     }
+    // ==================================
     if (src.type === "library") {
       return { ...emptyFrame(), sourceType: "library", charId: src.characterId };
     }
     return emptyFrame();
   }
 
+  // =============================================================================
+  // Function restores form state from video history -> VideoMeta to void
+  // =============================================================================
   function loadFromHistory(meta: VideoMeta) {
+    /*
+        loadFromHistory : restores all form state from a previously
+                          generated video's metadata
+        meta : video metadata containing prompt, provider, and frame sources
+    */
     setPrompt(meta.prompt);
     setEnhancedPrompt(meta.enhancedPrompt || null);
 
     const provider = String(meta.generation.provider || "comfyui");
     setVideoProvider(provider);
     const def = findModelDef(provider);
+    // ==================================
     if (def) {
       setVideoVariant(String(meta.generation.variant || def.defaultVariant));
       setVideoMode(String(meta.generation.mode || def.defaultMode || ""));
@@ -174,11 +284,15 @@ export default function GenerateVideoPage() {
     }
 
     setAspectRatio(String(meta.generation.aspectRatio || "16:9"));
+    // ==================================
     if (meta.generation.length) setVideoLength(Number(meta.generation.length));
+    // ==================================
     if (meta.generation.steps) setSteps(Number(meta.generation.steps));
+    // ==================================
     if (meta.generation.fps) setFps(Number(meta.generation.fps));
 
     setFirstFrame(sourceToFrame(meta.firstFrameSource));
+    // ==================================
     if (meta.lastFrameSource) {
       setUseLastFrame(true);
       setLastFrame(sourceToFrame(meta.lastFrameSource));
@@ -195,20 +309,32 @@ export default function GenerateVideoPage() {
     setError(null);
   }
 
+  // =============================================================================
+  // Function extracts and sets the last frame of a video -> string to Promise<void>
+  // =============================================================================
   async function useVideoLastFrame(videoUrl: string) {
+    /*
+        useVideoLastFrame : extracts the last frame from a generated video
+                            and sets it as the first frame for the next generation,
+                            optionally upscaling via PiAPI
+        videoUrl : URL of the video to extract the frame from
+    */
     setExtractingFrame(true);
     try {
       const params = new URL(videoUrl, window.location.origin).searchParams;
       const id = params.get("id");
       const project = params.get("project");
+      // ==================================
       if (!id) throw new Error("No video id");
 
       const doUpscale = isPiAPI && !!settings.piapiKey;
       const frameUrl = `/api/video-frame?id=${id}&frame=last${project ? `&project=${project}` : ""}${doUpscale ? "&upscale=true" : ""}`;
       const headers: Record<string, string> = {};
+      // ==================================
       if (doUpscale) headers["x-provider-key"] = settings.piapiKey;
 
       const res = await fetch(frameUrl, { headers });
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to extract frame");
@@ -233,17 +359,35 @@ export default function GenerateVideoPage() {
     }
   }
 
+  // =============================================================================
+  // Function switches the video provider and resets defaults -> string to void
+  // =============================================================================
   function handleProviderChange(newProvider: string) {
+    /*
+        handleProviderChange : updates the video provider and resets
+                               variant, mode, and duration to defaults
+        newProvider : the provider ID to switch to
+    */
     setVideoProvider(newProvider);
     const def = findModelDef(newProvider);
+    // ==================================
     if (def) {
       setVideoVariant(def.defaultVariant);
       setVideoMode(def.defaultMode || "");
+      // ==================================
       if (def.durations.length > 0) setDuration(def.defaultDuration);
     }
   }
 
+  // =============================================================================
+  // Function looks up the API key for a provider -> string to string
+  // =============================================================================
   function apiKeyFor(providerId: string): string {
+    /*
+        apiKeyFor : retrieves the API key for the given provider
+                    from the current settings
+        providerId : identifier of the provider to look up
+    */
     const map: Record<string, string> = {
       gemini: settings.geminiKey || "",
       openai: settings.openaiKey || "",
@@ -254,71 +398,138 @@ export default function GenerateVideoPage() {
     return map[providerId] || "";
   }
 
+  // =============================================================================
+  // Function filters completed scenes from a project -> string to ProjectScene[]
+  // =============================================================================
   function getDoneScenes(projectId: string): ProjectScene[] {
+    /*
+        getDoneScenes : returns scenes with status "done" and an image path
+                        from the specified project
+        projectId : ID of the project to filter scenes from
+    */
     const proj = projects.find(p => p.id === projectId);
     return (proj?.scenes || []).filter(s => s.status === "done" && s.imagePath);
   }
 
+  // =============================================================================
+  // Function resolves the preview image URL for a frame -> FrameSelection to string | null
+  // =============================================================================
   function getPreviewUrl(frame: FrameSelection): string | null {
+    /*
+        getPreviewUrl : determines the preview image URL based on
+                        the frame's source type and selected item
+        frame : the current frame selection state
+    */
+    // ==================================
     if (frame.sourceType === "project" && frame.projectId) {
       const scenes = getDoneScenes(frame.projectId);
       const scene = scenes.find(s => s.index === frame.sceneIndex);
+      // ==================================
       if (scene) return `/api/projects/${frame.projectId}/keyframes/${scene.index}`;
     }
+    // ==================================
     if (frame.sourceType === "library" && frame.charId) {
       const char = library.find(c => c.id === frame.charId);
+      // ==================================
       if (char?.imagePath) return `/api/library/${frame.charId}/image`;
     }
+    // ==================================
     if (frame.sourceType === "upload" && frame.uploadPreview) {
       return frame.uploadPreview;
     }
     return null;
   }
 
+  // =============================================================================
+  // Function converts frame selection to a frame image source -> FrameSelection to FrameImageSource
+  // =============================================================================
   function buildSource(frame: FrameSelection): FrameImageSource {
+    /*
+        buildSource : converts the UI frame selection state into
+                      a persistable frame image source object
+        frame : the current frame selection state
+    */
+    // ==================================
     if (frame.sourceType === "project" && frame.projectId) {
       return { type: "project", projectId: frame.projectId, sceneIndex: frame.sceneIndex };
     }
+    // ==================================
     if (frame.sourceType === "library" && frame.charId) {
       return { type: "library", characterId: frame.charId };
     }
+    // ==================================
     if (frame.sourceType === "upload" && frame.uploadBase64) {
       return { type: "base64", data: frame.uploadBase64 };
     }
     return null;
   }
 
+  // =============================================================================
+  // Function reads an uploaded file and sets frame state -> (File, string) to void
+  // =============================================================================
   function handleFileSelect(file: File, which: "first" | "last") {
+    /*
+        handleFileSelect : reads the uploaded image file as base64
+                           and updates the corresponding frame state
+        file : the uploaded image file
+        which : whether to update "first" or "last" frame
+    */
     const url = URL.createObjectURL(file);
     const reader = new FileReader();
     reader.onload = () => {
       const b64 = (reader.result as string).split(",")[1];
       const update = { uploadPreview: url, uploadBase64: b64 };
+      // ==================================
       if (which === "first") setFirstFrame(f => ({ ...f, ...update }));
       else setLastFrame(f => ({ ...f, ...update }));
     };
     reader.readAsDataURL(file);
   }
 
+  // =============================================================================
+  // Function builds headers for text LLM requests -> void to Record<string, string>
+  // =============================================================================
   function getTextHeaders(): Record<string, string> {
+    /*
+        getTextHeaders : constructs HTTP headers for text LLM API calls
+                         including provider keys and base URL overrides
+    */
     const tpId = settings.defaultTextProvider || "ollama";
     const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // ==================================
     if (tpId === "ollama" && settings.ollamaUrl) headers["x-text-base-url"] = settings.ollamaUrl;
     const textKey = apiKeyFor(tpId);
+    // ==================================
     if (textKey) headers["x-text-provider-key"] = textKey;
     return headers;
   }
 
+  // =============================================================================
+  // Function determines the frame mode based on selections -> void to string
+  // =============================================================================
   function getFrameMode(): "first" | "last" | "both" {
+    /*
+        getFrameMode : checks which frames have preview images selected
+                       and returns the appropriate mode string
+    */
     const hasFirst = !!getPreviewUrl(firstFrame);
     const hasLast = useLastFrame && !!getPreviewUrl(lastFrame);
     return hasFirst && hasLast ? "both" : hasFirst ? "first" : "last";
   }
 
+  // =============================================================================
+  // Function enhances the prompt with an LLM -> void to Promise<void>
+  // =============================================================================
   async function handleEnhance() {
+    /*
+        handleEnhance : sends the current prompt to an LLM for enhancement
+                        with character context and frame mode information
+    */
+    // ==================================
     if (!prompt.trim()) { setError("Enter a prompt first"); return; }
     const tpId = settings.defaultTextProvider || "ollama";
     const tModel = settings.defaultTextModel || "";
+    // ==================================
     if (!tpId || !tModel) { setError("Set a Text LLM in Settings first"); return; }
 
     setEnhancing(true);
@@ -339,6 +550,7 @@ export default function GenerateVideoPage() {
         }),
       });
 
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server returned ${res.status}`);
@@ -353,13 +565,23 @@ export default function GenerateVideoPage() {
     }
   }
 
+  // =============================================================================
+  // Function submits a video generation request -> void to Promise<void>
+  // =============================================================================
   async function handleGenerate() {
+    /*
+        handleGenerate : builds the request payload and calls the
+                         video generation API, then updates result state
+    */
     const finalPrompt = enhancedPrompt || prompt.trim();
+    // ==================================
     if (!finalPrompt) { setError("Enter a prompt"); return; }
+    // ==================================
     if (isPiAPI && !settings.piapiKey) { setError("PiAPI API key required. Set it in Settings."); return; }
 
     const firstSrc = buildSource(firstFrame);
     const lastSrc = useLastFrame ? buildSource(lastFrame) : null;
+    // ==================================
     if (!firstSrc && !lastSrc) { setError("Select at least one frame image"); return; }
 
     setGenerating(true);
@@ -367,7 +589,9 @@ export default function GenerateVideoPage() {
     setResult(null);
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // ==================================
     if (settings.comfyuiUrl) headers["x-base-url"] = settings.comfyuiUrl;
+    // ==================================
     if (isPiAPI && settings.piapiKey) headers["x-provider-key"] = settings.piapiKey;
 
     try {
@@ -387,6 +611,7 @@ export default function GenerateVideoPage() {
         }),
       });
 
+      // ==================================
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server returned ${res.status}`);
@@ -402,6 +627,9 @@ export default function GenerateVideoPage() {
     }
   }
 
+  // =====================================
+  // Derived values for render
+  // =====================================
   const firstPreview = getPreviewUrl(firstFrame);
   const lastPreview = useLastFrame ? getPreviewUrl(lastFrame) : null;
   const durationSeconds = isPiAPI ? duration : Number(((videoLength - 1) / fps).toFixed(1));
@@ -410,6 +638,9 @@ export default function GenerateVideoPage() {
     : modelDef ? `PiAPI — ${modelDef.label}` : videoProvider;
   const variantLabel = modelDef?.variants.find(v => v.id === videoVariant)?.label || videoVariant;
 
+  // =============================================================================
+  // Function renders a frame picker panel with source tabs -> (string, FrameSelection, ...) to JSX.Element
+  // =============================================================================
   function renderFramePicker(
     label: string,
     frame: FrameSelection,
@@ -417,6 +648,15 @@ export default function GenerateVideoPage() {
     fileRef: React.RefObject<HTMLInputElement | null>,
     preview: string | null,
   ) {
+    /*
+        renderFramePicker : renders a frame picker UI with project scene,
+                            library character, and upload source tabs
+        label : display label for the picker (e.g. "First Frame")
+        frame : current frame selection state
+        setFrame : state setter for the frame selection
+        fileRef : ref to the hidden file input element
+        preview : resolved preview image URL or null
+    */
     const scenes = getDoneScenes(frame.projectId);
     return (
       <div style={{ marginBottom: 16 }}>
@@ -431,6 +671,7 @@ export default function GenerateVideoPage() {
           ))}
         </div>
 
+        {/* ================================== */}
         {frame.sourceType === "project" && (
           <>
             <div className="field" style={{ marginBottom: 6 }}>
@@ -439,6 +680,7 @@ export default function GenerateVideoPage() {
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
+            {/* ================================== */}
             {scenes.length > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
                 {scenes.map(s => (
@@ -459,34 +701,40 @@ export default function GenerateVideoPage() {
           </>
         )}
 
+        {/* ================================== */}
         {frame.sourceType === "library" && (
-          library.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
-              {library.map(c => (
-                <div key={c.id} onClick={() => setFrame(f => ({ ...f, charId: c.id }))}
-                  style={{
-                    cursor: "pointer", borderRadius: 6, overflow: "hidden",
-                    border: frame.charId === c.id ? "2px solid var(--accent)" : "2px solid var(--border)",
-                    aspectRatio: "1", position: "relative",
-                  }}>
-                  {c.imagePath ? (
-                    <img src={`/api/library/${c.id}/image`} alt={c.label}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  ) : (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface-2)", fontSize: 10 }}>
-                      {c.label}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted" style={{ fontSize: 11 }}>No characters in library.</p>
-          )
+          <>
+            {/* ================================== */}
+            {library.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
+                {library.map(c => (
+                  <div key={c.id} onClick={() => setFrame(f => ({ ...f, charId: c.id }))}
+                    style={{
+                      cursor: "pointer", borderRadius: 6, overflow: "hidden",
+                      border: frame.charId === c.id ? "2px solid var(--accent)" : "2px solid var(--border)",
+                      aspectRatio: "1", position: "relative",
+                    }}>
+                    {c.imagePath ? (
+                      <img src={`/api/library/${c.id}/image`} alt={c.label}
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--s2)", fontSize: 10 }}>
+                        {c.label}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted" style={{ fontSize: 11 }}>No characters in library.</p>
+            )}
+          </>
         )}
 
+        {/* ================================== */}
         {frame.sourceType === "upload" && (
           <>
+            {/* ================================== */}
             {!frame.uploadPreview ? (
               <div className="drop" style={{ padding: "16px 8px", fontSize: 12 }}
                 onClick={() => fileRef.current?.click()}
@@ -505,6 +753,7 @@ export default function GenerateVideoPage() {
           </>
         )}
 
+        {/* ================================== */}
         {preview && (
           <div style={{ marginTop: 8, textAlign: "center" }}>
             <img src={preview} alt="Selected" style={{ maxHeight: 120, borderRadius: 6, border: "2px solid var(--accent)" }} />
@@ -514,48 +763,42 @@ export default function GenerateVideoPage() {
     );
   }
 
+  // =====================================
+  // Render
+  // =====================================
   return (
-    <div className="page">
-      <h1>Generate Video</h1>
-      <p className="muted" style={{ marginBottom: 12 }}>
-        Create videos from images. Select first frame, last frame, or both.
-      </p>
-
-      <div className="note" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 12 }}>
-        <strong>Video:</strong> {providerLabel}
-        {variantLabel && <> &middot; {variantLabel}</>}
-        {videoMode && modelDef?.modes && <> &middot; {modelDef.modes.find(m => m.id === videoMode)?.label}</>}
-        &nbsp;|&nbsp;
-        <strong>Text LLM:</strong> {textProviderId} / {textModelName || "default"}
-        &nbsp;|&nbsp;
-        <strong>Output:</strong> {aspectRatio}
-        {(durationSeconds > 0) && <> &middot; ~{durationSeconds}s</>}
-        {useLastFrame && " (first + last frame)"}
-      </div>
-
-      {error && (
-        <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 16 }}>
-          {error}
-          <button className="btn btn-sm btn-ghost" style={{ marginLeft: 8 }} onClick={() => setError(null)}>dismiss</button>
+    <div className="video-workspace">
+      {/* =====================================
+          Left panel — controls
+          ===================================== */}
+      <div className="video-controls">
+        <div className="panel-header">
+          Video Generation
+          <span className="badge">{providerLabel}</span>
         </div>
-      )}
 
-      <div className="gen-layout">
-        <div className="panel">
-          {renderFramePicker("First Frame", firstFrame, setFirstFrame, firstFileRef, firstPreview)}
+        {/* ================================== */}
+        {error && (
+          <div className="note" style={{ borderLeftColor: "var(--danger)", marginBottom: 12 }}>
+            {error}
+            <button className="btn btn-sm btn-ghost" style={{ marginLeft: 8 }} onClick={() => setError(null)}>dismiss</button>
+          </div>
+        )}
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
-            <input type="checkbox" checked={useLastFrame} onChange={e => {
-              setUseLastFrame(e.target.checked);
-              if (e.target.checked) setLastFrame({ ...firstFrame });
-            }} style={{ width: "auto" }} />
-            <span style={{ fontSize: 13 }}>Also set last frame</span>
-          </label>
+        {renderFramePicker("First Frame", firstFrame, setFirstFrame, firstFileRef, firstPreview)}
 
-          {useLastFrame && renderFramePicker("Last Frame", lastFrame, setLastFrame, lastFileRef, lastPreview)}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={useLastFrame} onChange={e => {
+            setUseLastFrame(e.target.checked);
+            if (e.target.checked) setLastFrame({ ...firstFrame });
+          }} style={{ width: "auto" }} />
+          <span style={{ fontSize: 13 }}>Also set last frame</span>
+        </label>
 
-          <hr style={{ margin: "12px 0", borderColor: "var(--border)" }} />
+        {/* ================================== */}
+        {useLastFrame && renderFramePicker("Last Frame", lastFrame, setLastFrame, lastFileRef, lastPreview)}
 
+        <div style={{ borderTop: "1px solid var(--border-dim)", margin: "12px 0", paddingTop: 12 }}>
           <div className="field">
             <label>Video Provider</label>
             <select value={videoProvider} onChange={e => handleProviderChange(e.target.value)}>
@@ -588,6 +831,7 @@ export default function GenerateVideoPage() {
             {enhancing ? "Enhancing with LLM..." : "Enhance Prompt with LLM"}
           </button>
 
+          {/* ================================== */}
           {enhancedPrompt && (
             <div className="field" style={{ marginBottom: 8 }}>
               <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -614,6 +858,7 @@ export default function GenerateVideoPage() {
             </div>
           </div>
 
+          {/* ================================== */}
           {!isPiAPI && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <div className="field" style={{ flex: 1, minWidth: 100 }}>
@@ -638,8 +883,10 @@ export default function GenerateVideoPage() {
             </div>
           )}
 
+          {/* ================================== */}
           {isPiAPI && modelDef && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {/* ================================== */}
               {modelDef.variants.length > 1 && (
                 <div className="field" style={{ flex: 1, minWidth: 120 }}>
                   <label>Version</label>
@@ -650,6 +897,7 @@ export default function GenerateVideoPage() {
                   </select>
                 </div>
               )}
+              {/* ================================== */}
               {modelDef.modes && (
                 <div className="field" style={{ flex: 1, minWidth: 100 }}>
                   <label>Mode</label>
@@ -660,6 +908,7 @@ export default function GenerateVideoPage() {
                   </select>
                 </div>
               )}
+              {/* ================================== */}
               {modelDef.durations.length > 0 && (
                 <div className="field" style={{ flex: 1, minWidth: 100 }}>
                   <label>Duration</label>
@@ -673,130 +922,123 @@ export default function GenerateVideoPage() {
             </div>
           )}
 
+          {/* ================================== */}
           {isPiAPI && !settings.piapiKey && (
             <div className="note" style={{ borderLeftColor: "var(--danger)", fontSize: 12, marginBottom: 8 }}>
-              PiAPI API key not set. Go to <a href="/settings">Settings</a> to add it.
+              PiAPI API key not set. Open Settings (gear icon) to add it.
             </div>
           )}
 
-          <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }}
+          <button className="gen-btn" style={{ marginTop: 8 }}
             onClick={handleGenerate}
             disabled={generating || enhancing || !prompt.trim() || (!firstPreview && !lastPreview) || (isPiAPI && !settings.piapiKey)}>
-            {generating ? "Generating Video..." : enhancedPrompt ? "Generate Video (enhanced)" : "Generate Video (raw prompt)"}
+            {generating ? "Generating Video..." : enhancedPrompt ? "Generate Video (enhanced)" : "Generate Video"}
           </button>
-        </div>
-
-        <div className="panel">
-          <h2>Result</h2>
-          {generating && (
-            <div className="page-center" style={{ padding: "60px 0" }}>
-              <div className="spinner" />
-              <p className="muted" style={{ marginTop: 12 }}>Generating video with {providerLabel}...</p>
-              <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>This may take several minutes</p>
-            </div>
-          )}
-          {result && (
-            <div>
-              <video src={result.videoUrl} controls autoPlay loop
-                style={{ width: "100%", borderRadius: 10, marginBottom: 12 }} />
-              <div className="note" style={{ fontSize: 11, padding: "6px 10px" }}>
-                <strong>Generated with:</strong> {result.generation.provider || "comfyui"} / {result.generation.model || "LTX 2.3"}
-                {result.generation.textProvider && <><br /><strong>Prompt LLM:</strong> {result.generation.textProvider} / {result.generation.textModel}</>}
-                <br />
-                Frames: {result.generation.frameMode || "first"}
-                {result.generation.length && <> &middot; {result.generation.length} frames</>}
-                {result.generation.duration && <> &middot; {result.generation.duration}s</>}
-                {result.generation.steps && <> &middot; {result.generation.steps} steps</>}
-                {" "}&middot; {result.generation.aspectRatio || "16:9"}
-              </div>
-              {enhancedPrompt && (
-                <details style={{ marginTop: 8 }}>
-                  <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Prompt used</summary>
-                  <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-dim)" }}>{enhancedPrompt}</p>
-                </details>
-              )}
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <a href={result.videoUrl} download className="btn" style={{ flex: 1, textAlign: "center" }}>
-                  Download
-                </a>
-                <button className="btn btn-primary" style={{ flex: 1 }}
-                  onClick={() => useVideoLastFrame(result.videoUrl)}
-                  disabled={extractingFrame}>
-                  {extractingFrame
-                    ? (isPiAPI && settings.piapiKey ? "Extracting & upscaling..." : "Extracting...")
-                    : (isPiAPI && settings.piapiKey ? "Last frame → upscale → next" : "Last frame → next first frame")}
-                </button>
-              </div>
-            </div>
-          )}
-          {!generating && !result && (
-            <div className="page-center" style={{ padding: "60px 0" }}>
-              <p className="muted">Generated video will appear here</p>
-            </div>
-          )}
         </div>
       </div>
 
-      {videoHistory.length > 0 && (
-        <div className="panel" style={{ marginTop: 16 }}>
-          <h2>Video History</h2>
-          <p className="muted" style={{ fontSize: 11, marginTop: 0, marginBottom: 12 }}>
-            Click a video to reload its settings. {videoHistory.length} video{videoHistory.length !== 1 ? "s" : ""} generated.
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-            {videoHistory.map(v => {
-              const fs = v.firstFrameSource;
-              const ls = v.lastFrameSource;
-              const firstLabel = fs?.type === "project" ? `Scene ${(fs.sceneIndex ?? 0) + 1}` : fs?.type === "library" ? "Library" : fs?.type === "base64" ? "Upload" : "—";
-              const lastLabel = ls?.type === "project" ? `Scene ${(ls.sceneIndex ?? 0) + 1}` : ls?.type === "library" ? "Library" : ls ? "Upload" : "—";
-              const vidProjId = fs?.type === "project" ? fs.projectId : ls?.type === "project" ? (ls as { projectId: string }).projectId : null;
-              const projName = vidProjId ? projects.find(p => p.id === vidProjId)?.name || vidProjId : null;
-              const vidSrc = vidProjId
-                ? `/api/generate-video?id=${v.videoId}&project=${vidProjId}`
-                : `/api/generate-video?id=${v.videoId}`;
-              const date = new Date(v.createdAt);
-              const timeStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-
-              return (
-                <div key={v.videoId}
-                  onClick={() => loadFromHistory(v)}
-                  style={{
-                    cursor: "pointer", borderRadius: 8, overflow: "hidden",
-                    border: "1px solid var(--border)", background: "var(--surface-2)",
-                    transition: "border-color 0.15s",
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent)")}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
-                >
-                  <video
-                    src={vidSrc}
-                    muted
-                    preload="metadata"
-                    style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", display: "block" }}
-                    onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play()}
-                    onMouseLeave={e => { const el = e.currentTarget as HTMLVideoElement; el.pause(); el.currentTime = 0; }}
-                  />
-                  <div style={{ padding: "8px 10px", fontSize: 11, lineHeight: 1.5 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {v.prompt.slice(0, 80)}{v.prompt.length > 80 ? "..." : ""}
-                    </div>
-                    <div className="muted">
-                      {v.generation.provider} / {v.generation.model}
-                      {" · "}{v.generation.aspectRatio} · {v.generation.duration || v.generation.length}
-                      {v.generation.duration ? "s" : " frames"}
-                    </div>
-                    <div className="muted">
-                      First: {firstLabel} · Last: {lastLabel}
-                      {projName && <> · <em>{projName}</em></>}
-                    </div>
-                    <div className="muted" style={{ fontSize: 10 }}>{timeStr}</div>
-                  </div>
-                </div>
-              );
-            })}
+      {/* =====================================
+          Center panel — preview / result
+          ===================================== */}
+      <div className="video-preview">
+        {/* ================================== */}
+        {generating && (
+          <div className="page-center" style={{ flex: 1 }}>
+            <div className="spinner" />
+            <p className="muted" style={{ marginTop: 12 }}>Generating video with {providerLabel}...</p>
+            <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>This may take several minutes</p>
           </div>
+        )}
+        {/* ================================== */}
+        {result && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <video src={result.videoUrl} controls autoPlay loop
+              style={{ width: "100%", borderRadius: 10, marginBottom: 12 }} />
+            <div className="note" style={{ fontSize: 11, padding: "6px 10px" }}>
+              <strong>Generated with:</strong> {result.generation.provider || "comfyui"} / {result.generation.model || "wan-2.1"}
+              {result.generation.textProvider && <><br /><strong>Prompt LLM:</strong> {result.generation.textProvider} / {result.generation.textModel}</>}
+              <br />
+              Frames: {result.generation.frameMode || "first"}
+              {result.generation.length && <> &middot; {result.generation.length} frames</>}
+              {result.generation.duration && <> &middot; {result.generation.duration}s</>}
+              {result.generation.steps && <> &middot; {result.generation.steps} steps</>}
+              {" "}&middot; {result.generation.aspectRatio || "16:9"}
+            </div>
+            {/* ================================== */}
+            {enhancedPrompt && (
+              <details style={{ marginTop: 8 }}>
+                <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Prompt used</summary>
+                <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-2)" }}>{enhancedPrompt}</p>
+              </details>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <a href={result.videoUrl} download className="btn" style={{ flex: 1, textAlign: "center" }}>
+                Download
+              </a>
+              <button className="btn btn-primary" style={{ flex: 1 }}
+                onClick={() => useVideoLastFrame(result.videoUrl)}
+                disabled={extractingFrame}>
+                {extractingFrame
+                  ? (isPiAPI && settings.piapiKey ? "Extracting & upscaling..." : "Extracting...")
+                  : (isPiAPI && settings.piapiKey ? "Last frame → upscale → next" : "Last frame → next first frame")}
+              </button>
+            </div>
+          </div>
+        )}
+        {/* ================================== */}
+        {!generating && !result && (
+          <div className="page-center" style={{ flex: 1 }}>
+            <p className="muted">Generated video will appear here</p>
+          </div>
+        )}
+      </div>
+
+      {/* =====================================
+          Right panel — history
+          ===================================== */}
+      <div className="video-history">
+        <div className="panel-header">
+          History
+          {videoHistory.length > 0 && <span className="badge">{videoHistory.length}</span>}
         </div>
-      )}
+        {/* ================================== */}
+        {videoHistory.length === 0 ? (
+          <p className="muted" style={{ fontSize: 12, textAlign: "center", marginTop: 24 }}>No videos yet</p>
+        ) : (
+          videoHistory.map(v => {
+            const fs = v.firstFrameSource;
+            const ls = v.lastFrameSource;
+            const vidProjId = fs?.type === "project" ? fs.projectId : ls?.type === "project" ? (ls as { projectId: string }).projectId : null;
+            const vidSrc = vidProjId
+              ? `/api/generate-video?id=${v.videoId}&project=${vidProjId}`
+              : `/api/generate-video?id=${v.videoId}`;
+            const date = new Date(v.createdAt);
+            const timeStr = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+            return (
+              <div key={v.videoId} className="history-item" onClick={() => loadFromHistory(v)}>
+                <video
+                  src={vidSrc}
+                  muted
+                  preload="metadata"
+                  className="history-thumb"
+                  onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play()}
+                  onMouseLeave={e => { const el = e.currentTarget as HTMLVideoElement; el.pause(); el.currentTime = 0; }}
+                />
+                <div className="history-meta">
+                  <p>{v.prompt.slice(0, 60)}{v.prompt.length > 60 ? "..." : ""}</p>
+                  <span className="time">
+                    {v.generation.provider} &middot; {v.generation.aspectRatio} &middot; {timeStr}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
+// =============================================================================
+// End of GenerateVideoPage
+// =============================================================================

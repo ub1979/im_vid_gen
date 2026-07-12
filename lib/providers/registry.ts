@@ -1,3 +1,17 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// Registry : central lookup for all image and text providers.
+//            Maps provider IDs to adapter instances and UI descriptors.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import type { ImageProvider, ImageProviderCapabilities, TextLLM } from "./types";
 import { geminiImageProvider, geminiTextLLM } from "./gemini";
 import { openaiImageProvider, openaiTextLLM } from "./openai";
@@ -6,17 +20,22 @@ import { ollamaImageProvider, ollamaTextLLM } from "./ollama";
 import { comfyuiImageProvider } from "./comfyui";
 import { piapiImageProvider } from "./piapi";
 import { claudeTextLLM } from "./claude";
+// =============================================================================
 
-// ---- Descriptor type (for UI display) ----
-
+// =============================================================================
+/*
+    ProviderDescriptor : UI-facing metadata for a provider
+*/
+// =============================================================================
 export interface ProviderDescriptor {
   id: string;
   label: string;
   capabilities: ImageProviderCapabilities;
 }
 
-// ---- Image providers ----
-
+// =============================================================================
+// Image provider map
+// =============================================================================
 const imageProviderMap: Record<string, ImageProvider> = {
   gemini: geminiImageProvider,
   openai: openaiImageProvider,
@@ -26,6 +45,9 @@ const imageProviderMap: Record<string, ImageProvider> = {
   piapi: piapiImageProvider,
 };
 
+// =============================================================================
+// Image provider descriptors for UI
+// =============================================================================
 export const IMAGE_PROVIDERS: ProviderDescriptor[] = [
   {
     id: "gemini",
@@ -59,8 +81,9 @@ export const IMAGE_PROVIDERS: ProviderDescriptor[] = [
   },
 ];
 
-// ---- Text LLM providers ----
-
+// =============================================================================
+// Text LLM provider map
+// =============================================================================
 const textLLMMap: Record<string, TextLLM> = {
   gemini: geminiTextLLM,
   openai: openaiTextLLM,
@@ -68,6 +91,9 @@ const textLLMMap: Record<string, TextLLM> = {
   claude: claudeTextLLM,
 };
 
+// =============================================================================
+// Text provider descriptors for UI
+// =============================================================================
 export const TEXT_PROVIDERS = [
   { id: "gemini", label: "Gemini", model: "gemini-2.5-flash" },
   { id: "claude", label: "Claude", model: "claude-sonnet-4-20250514" },
@@ -75,22 +101,51 @@ export const TEXT_PROVIDERS = [
   { id: "ollama", label: "Ollama (local)", model: "llama3" },
 ];
 
-// ---- Lookup functions ----
-
+// =============================================================================
+// Function looks up an image provider adapter by ID -> string to ImageProvider
+// =============================================================================
 export function getImageProviderAdapter(id: string): ImageProvider {
+  /*
+      getImageProviderAdapter : returns the image provider for the given ID
+      id variable : provider identifier string
+  */
   const provider = imageProviderMap[id];
+  // ==================================
   if (!provider) throw new Error(`Unknown image provider: ${id}`);
+  // ==================================
   return provider;
 }
 
+// =============================================================================
+// Function looks up a text LLM adapter by ID -> string to TextLLM
+// =============================================================================
 export function getTextLLMAdapter(id: string): TextLLM {
+  /*
+      getTextLLMAdapter : returns the text LLM for the given ID
+      id variable : LLM identifier string
+  */
   const llm = textLLMMap[id];
+  // ==================================
   if (!llm) throw new Error(`Unknown text LLM: ${id}`);
+  // ==================================
   return llm;
 }
 
+// =============================================================================
+// Function looks up a provider descriptor by ID -> string to ProviderDescriptor | undefined
+// =============================================================================
 export function getImageProviderDescriptor(id: string): ProviderDescriptor | undefined {
+  /*
+      getImageProviderDescriptor : finds the UI descriptor for an image provider
+      id variable : provider identifier string
+  */
   return IMAGE_PROVIDERS.find((p) => p.id === id);
 }
 
+// =============================================================================
+// Alias for backward compatibility
+// =============================================================================
 export const getImageProvider = getImageProviderDescriptor;
+
+// =============================================================================
+// =============================================================================

@@ -1,15 +1,42 @@
 "use client";
 
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// ProjectsPage : grid view of saved scene projects with rename and delete
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ProjectManifest } from "@/lib/types";
+// =============================================================================
 
+// =============================================================================
+// Function renders the projects listing page -> void to JSX
+// =============================================================================
 export default function ProjectsPage() {
+  /*
+      ProjectsPage : displays all saved scene projects in a card grid
+  */
+
+  // =====================================
+  // State
+  // =====================================
   const [projects, setProjects] = useState<ProjectManifest[]>([]);
   const [loading, setLoading] = useState(true);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
+  // =====================================
+  // Fetch projects on mount
+  // =====================================
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
@@ -23,25 +50,51 @@ export default function ProjectsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // =============================================================================
+  // Function deletes a project after confirmation -> MouseEvent, ProjectManifest to void
+  // =============================================================================
   async function handleDelete(e: React.MouseEvent, project: ProjectManifest) {
+    /*
+        handleDelete : deletes the given project after user confirms
+        e variable : click event to prevent link navigation
+        project variable : the project manifest to delete
+    */
     e.preventDefault();
     e.stopPropagation();
+    // ==================================
     if (!window.confirm(`Delete project '${project.name}'? This cannot be undone.`)) return;
     const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
+    // ==================================
     if (res.ok) {
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
     }
   }
 
+  // =============================================================================
+  // Function enters rename mode for a project -> MouseEvent, ProjectManifest to void
+  // =============================================================================
   function startRename(e: React.MouseEvent, project: ProjectManifest) {
+    /*
+        startRename : activates the inline rename input for a project card
+        e variable : click event to prevent link navigation
+        project variable : the project manifest to rename
+    */
     e.preventDefault();
     e.stopPropagation();
     setRenamingId(project.id);
     setRenameValue(project.name);
   }
 
+  // =============================================================================
+  // Function submits the new name for a project -> string to void
+  // =============================================================================
   async function submitRename(oldId: string) {
+    /*
+        submitRename : PATCHes the project with the new name
+        oldId variable : the project id to rename
+    */
     const trimmed = renameValue.trim();
+    // ==================================
     if (!trimmed) {
       setRenamingId(null);
       return;
@@ -51,6 +104,7 @@ export default function ProjectsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
     });
+    // ==================================
     if (res.ok) {
       const updated: ProjectManifest = await res.json();
       setProjects((prev) =>
@@ -60,10 +114,19 @@ export default function ProjectsPage() {
     setRenamingId(null);
   }
 
+  // =============================================================================
+  // Function cancels an active rename -> void to void
+  // =============================================================================
   function cancelRename() {
+    /*
+        cancelRename : exits rename mode without saving
+    */
     setRenamingId(null);
   }
 
+  // =====================================
+  // Shared icon button styles
+  // =====================================
   const iconBtn: React.CSSProperties = {
     position: "absolute",
     zIndex: 2,
@@ -81,6 +144,10 @@ export default function ProjectsPage() {
     transition: "background 0.15s",
   };
 
+  // ==================================
+  // Loading state
+  // ==================================
+  // ==================================
   if (loading) {
     return (
       <div className="page page-center" style={{ padding: "60px 0" }}>
@@ -89,6 +156,9 @@ export default function ProjectsPage() {
     );
   }
 
+  // =====================================
+  // Render
+  // =====================================
   return (
     <div className="page">
       <h1>Projects</h1>
@@ -96,6 +166,7 @@ export default function ProjectsPage() {
         Load a previous scene project to view, edit prompts, and regenerate images.
       </p>
 
+      {/* ================================== */}
       {projects.length === 0 ? (
         <div className="page-center" style={{ padding: "40px 0" }}>
           <p className="muted">
@@ -130,11 +201,12 @@ export default function ProjectsPage() {
                   onClick={(e) => handleDelete(e, p)}
                   title="Delete project"
                   style={{ ...iconBtn, top: 6, right: 6 }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--fail)")}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--danger)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,0,0,0.5)")}
                 >
                   ✕
                 </button>
+                {/* ================================== */}
                 {firstDone ? (
                   <img
                     src={`/api/projects/${p.id}/keyframes/${firstDone.index}`}
@@ -147,6 +219,7 @@ export default function ProjectsPage() {
                   </div>
                 )}
                 <div className="project-card-info">
+                  {/* ================================== */}
                   {isRenaming ? (
                     <form
                       onSubmit={(e) => { e.preventDefault(); submitRename(p.id); }}
@@ -183,3 +256,6 @@ export default function ProjectsPage() {
     </div>
   );
 }
+
+// =============================================================================
+// =============================================================================

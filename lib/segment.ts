@@ -1,39 +1,77 @@
+// =============================================================================
+// '''
+// Modifying it on 2026-07-11
+//
+// Segment : scene segmentation — builds the LLM system prompt for
+//           splitting text into timeline scenes and parses/validates
+//           the structured JSON output.
+//
+// done by : main git
+//
+// '''
+// =============================================================================
+
+// =============================================================================
+// Importing the libraries
 import { sceneArraySchema } from "./schema";
 import type { Scene } from "./providers/types";
+// =============================================================================
 
-// ---- Build the segmentation system prompt ----
-
+// =============================================================================
+// Function returns prompt style guide for a given provider -> string to string
+// =============================================================================
 function getPromptStyleGuide(imageProviderId?: string): string {
-  switch (imageProviderId) {
-    case "comfyui":
-      return `
+  /*
+      getPromptStyleGuide : returns provider-specific prompt writing instructions
+      imageProviderId variable : the image provider ID (comfyui, gemini, openai, etc.)
+  */
+  // ==================================
+  if (imageProviderId === "comfyui") {
+    return `
 ## Prompt Style (Qwen-Image)
 Write prompts in a descriptive, tag-based style. Lead with the subject and characters, then describe the scene, setting, lighting, mood, camera angle, and art style. Use comma-separated descriptive phrases.
 Example style: "A cute brown dog with floppy ears and red cape, walking through sunny park, green grass, colorful flowers, warm golden light, 3D Pixar animation style, cheerful mood, wide angle shot"`;
-    case "gemini":
-      return `
+  // ==================================
+  } else if (imageProviderId === "gemini") {
+    return `
 ## Prompt Style (Gemini)
 Write prompts as detailed natural language descriptions. Be narrative — describe what's happening, the characters' expressions and actions, the environment, and the desired visual style. Include emotional tone and atmosphere.`;
-    case "openai":
-      return `
+  // ==================================
+  } else if (imageProviderId === "openai") {
+    return `
 ## Prompt Style (OpenAI)
 Write prompts as clear, concise natural language descriptions. Focus on the main subject, action, setting, and style. Be specific about visual details but keep prompts under 200 words.`;
-    default:
-      return "";
+  // ==================================
+  } else {
+    return "";
   }
 }
 
+// =============================================================================
+// Function builds the full segmentation system prompt -> number, number, chars, provider to string
+// =============================================================================
 export function buildSegmentationPrompt(
   sceneCount: number,
   intervalSeconds: number,
   characters: { label: string; description?: string; hasImage?: boolean }[],
   imageProviderId?: string,
 ): string {
+  /*
+      buildSegmentationPrompt : constructs the system prompt for the LLM
+      sceneCount variable : total number of scenes to generate
+      intervalSeconds variable : duration of each scene in seconds
+      characters variable : array of character definitions
+      imageProviderId variable : optional image provider for style-specific prompts
+  */
+  // =====================================
+  // Build character lines
+  // =====================================
   const charLines: string[] = [];
   for (const c of characters) {
     charLines.push(`- "${c.label}"${c.description ? `: ${c.description}` : ""}`);
   }
 
+  // ==================================
   const characterInstructions = characters.length > 0
     ? `
 ## Character Consistency
@@ -78,22 +116,32 @@ Return ONLY a JSON array — no markdown fences, no commentary, no explanations.
 }`;
 }
 
-// ---- Parse and validate LLM output ----
-
+// =============================================================================
+// Function parses and validates LLM scene output -> string, number to Scene[]
+// =============================================================================
 export function parseAndValidate(
   raw: string,
   expectedCount: number,
 ): Scene[] {
+  /*
+      parseAndValidate : parses raw LLM JSON output and validates against schema
+      raw variable : the raw text response from the LLM
+      expectedCount variable : the expected number of scenes
+  */
+  // =====================================
   // Strip markdown code fences if present
+  // =====================================
   let cleaned = raw.trim();
 
-  // Remove ```json ... ``` or ``` ... ```
   const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  // ==================================
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();
   }
 
+  // =====================================
   // Parse JSON
+  // =====================================
   let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
@@ -103,8 +151,11 @@ export function parseAndValidate(
     );
   }
 
+  // =====================================
   // Validate with Zod
+  // =====================================
   const result = sceneArraySchema.safeParse(parsed);
+  // ==================================
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `${i.path.join(".")}: ${i.message}`)
@@ -114,7 +165,10 @@ export function parseAndValidate(
 
   const scenes = result.data as Scene[];
 
+  // =====================================
   // Check array length
+  // =====================================
+  // ==================================
   if (scenes.length !== expectedCount) {
     throw new Error(
       `Expected ${expectedCount} scenes but got ${scenes.length}`,
@@ -123,3 +177,6 @@ export function parseAndValidate(
 
   return scenes;
 }
+
+// =============================================================================
+// =============================================================================
